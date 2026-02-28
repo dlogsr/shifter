@@ -1,110 +1,148 @@
 /**
- * Shifter Prompt-to-Motion Parser
- * Converts natural language descriptions into motion effect definitions.
- * Uses keyword matching and parameterized templates.
+ * Shifter Prompt-to-Shader Parser
+ * Converts natural language into shader-based motion effect definitions.
+ * Maps keywords to WebGL uniform-driven per-pixel transformations.
  */
 
 const PromptParser = (() => {
 
-  // ===== Keyword -> Motion Mapping =====
+  // ===== Keyword -> Shader Layer Mapping =====
   const MOTION_KEYWORDS = {
-    // Zoom
-    'zoom in':        { type: 'scaleUniform', params: { amount: { from: 0, to: 0.2 } } },
-    'zoom out':       { type: 'scaleUniform', params: { amount: { from: 0.2, to: 0 } } },
-    'scale up':       { type: 'scaleUniform', params: { amount: { from: 0, to: 0.25 } } },
-    'scale down':     { type: 'scaleUniform', params: { amount: { from: 0.15, to: -0.05 } } },
-    'zoom':           { type: 'scaleUniform', params: { amount: { from: 0, to: 0.15 } } },
-    'grow':           { type: 'scaleUniform', params: { amount: { from: -0.1, to: 0.1 } } },
-    'shrink':         { type: 'scaleUniform', params: { amount: { from: 0.1, to: -0.1 } } },
-    'punch':          { type: 'scaleUniform', params: { amount: { from: 0, to: 0.3 } } },
 
-    // Pan / Translate
-    'pan left':       { type: 'translate', params: { x: { from: 0, to: -60 }, y: 0 } },
-    'pan right':      { type: 'translate', params: { x: { from: 0, to: 60 }, y: 0 } },
-    'pan up':         { type: 'translate', params: { x: 0, y: { from: 0, to: -40 } } },
-    'pan down':       { type: 'translate', params: { x: 0, y: { from: 0, to: 40 } } },
-    'slide left':     { type: 'translate', params: { x: { from: 40, to: -40 }, y: 0 } },
-    'slide right':    { type: 'translate', params: { x: { from: -40, to: 40 }, y: 0 } },
-    'slide':          { type: 'translate', params: { x: { from: -30, to: 30 }, y: 0 } },
+    // --- Noise / Warp ---
+    'noise warp':    { type: 'noiseWarp', params: { amount: 0.08, freq: 4, speed: 1 } },
+    'warp':          { type: 'noiseWarp', params: { amount: 0.06, freq: 3.5, speed: 1 } },
+    'organic':       { type: 'noiseWarp', params: { amount: 0.05, freq: 3, speed: 0.8 } },
+    'liquid':        { type: 'noiseWarp', params: { amount: 0.1, freq: 3, speed: 1.2 } },
+    'melt':          { type: 'noiseWarp', params: { amount: { from: 0, to: 0.15 }, freq: 3, speed: 0.8 } },
+    'flow':          { type: 'noiseWarp', params: { amount: 0.06, freq: 2.5, speed: 1.5 } },
+    'morph':         { type: 'noiseWarp', params: { amount: { wave: 'sine', freq: 0.3, amp: 0.06, offset: 0.04 }, freq: 4, speed: 1 } },
+    'breathe':       { type: 'noiseWarp', params: { amount: { wave: 'sine', freq: 0.4, amp: 0.04, offset: 0.02 }, freq: 2, speed: 0.5 } },
 
-    // Drift / Float
-    'drift':          { type: 'translate', params: { x: { wave: 'sine', freq: 0.4, amp: 20 }, y: { wave: 'sine', freq: 0.25, amp: 12, phase: 1.2 } } },
-    'float':          { type: 'translate', params: { x: { wave: 'sine', freq: 0.3, amp: 15 }, y: { wave: 'cosine', freq: 0.2, amp: 10 } } },
-    'sway':           { type: 'translate', params: { x: { wave: 'sine', freq: 0.6, amp: 18 }, y: 0 } },
-    'bob':            { type: 'translate', params: { x: 0, y: { wave: 'sine', freq: 0.8, amp: 12 } } },
-    'hover':          { type: 'translate', params: { x: { wave: 'sine', freq: 0.3, amp: 8 }, y: { wave: 'sine', freq: 0.5, amp: 6, phase: 0.8 } } },
-    'wander':         { type: 'translate', params: { x: { wave: 'noise', freq: 2, amp: 20, octaves: 3, seed: 42 }, y: { wave: 'noise', freq: 2, amp: 15, octaves: 3, seed: 99 } } },
+    // --- Wave Distortion ---
+    'wave':          { type: 'wave', params: { ampX: 25, ampY: 15, freqX: 15, freqY: 12 } },
+    'wave distort':  { type: 'wave', params: { ampX: 35, ampY: 25, freqX: 12, freqY: 10 } },
+    'undulate':      { type: 'wave', params: { ampX: 20, ampY: 30, freqX: 8, freqY: 6 } },
+    'sine wave':     { type: 'wave', params: { ampX: { wave: 'sine', freq: 0.5, amp: 20 }, ampY: 0, freqX: 20, freqY: 1 } },
+    'wobble':        { type: 'wave', params: { ampX: { wave: 'sine', freq: 1.5, amp: 15 }, ampY: { wave: 'cosine', freq: 1, amp: 10 }, freqX: 10, freqY: 8 } },
 
-    // Rotation
-    'rotate':         { type: 'rotate', params: { angle: { from: 0, to: 15 } } },
-    'spin':           { type: 'rotate', params: { angle: { from: 0, to: 360 } } },
-    'tilt':           { type: 'rotate', params: { angle: { wave: 'sine', freq: 0.6, amp: 5 } } },
-    'rock':           { type: 'rotate', params: { angle: { wave: 'sine', freq: 0.8, amp: 4 } } },
-    'swing':          { type: 'rotate', params: { angle: { wave: 'sine', freq: 0.5, amp: 8 } } },
-    'wobble':         { type: 'rotate', params: { angle: { wave: 'sine', freq: 2, amp: 3 } } },
+    // --- Ripple ---
+    'ripple':        { type: 'ripple', params: { amp: 0.04, freq: 35, center: 0 } },
+    'pond':          { type: 'ripple', params: { amp: 0.05, freq: 30, center: 0 } },
+    'shockwave':     { type: 'ripple', params: { amp: { from: 0.08, to: 0 }, freq: 50, center: 0 } },
+    'pulse':         { type: 'ripple', params: { amp: { wave: 'sine', freq: 2, amp: 0.03 }, freq: 25 } },
+    'radial':        { type: 'ripple', params: { amp: 0.03, freq: 20, center: 0 } },
 
-    // Shake / Jitter
-    'shake':          { type: 'shake', params: { intensityX: { wave: 'noise', freq: 10, amp: 8, octaves: 2, seed: 1 }, intensityY: { wave: 'noise', freq: 10, amp: 6, octaves: 2, seed: 2 } } },
-    'jitter':         { type: 'shake', params: { intensityX: { wave: 'noise', freq: 14, amp: 6, octaves: 2, seed: 5 }, intensityY: { wave: 'noise', freq: 14, amp: 5, octaves: 2, seed: 6 } } },
-    'tremble':        { type: 'shake', params: { intensityX: { wave: 'noise', freq: 18, amp: 3, octaves: 3, seed: 10 }, intensityY: { wave: 'noise', freq: 18, amp: 3, octaves: 3, seed: 11 } } },
-    'vibrate':        { type: 'shake', params: { intensityX: { wave: 'sine', freq: 20, amp: 4 }, intensityY: { wave: 'sine', freq: 20, amp: 4, phase: 1 } } },
-    'earthquake':     { type: 'shake', params: { intensityX: { wave: 'noise', freq: 8, amp: 20, octaves: 3, seed: 15 }, intensityY: { wave: 'noise', freq: 8, amp: 18, octaves: 3, seed: 16 } } },
-    'handheld':       { type: 'shake', params: { intensityX: { wave: 'noise', freq: 4, amp: 5, octaves: 3, seed: 20 }, intensityY: { wave: 'noise', freq: 4, amp: 4, octaves: 3, seed: 21 } } },
+    // --- Displacement ---
+    'displace':      { type: 'displace', params: { x: { wave: 'noise', freq: 6, amp: 20, seed: 1 }, y: { wave: 'noise', freq: 5, amp: 15, seed: 2 } } },
+    'shift':         { type: 'displace', params: { x: { wave: 'sine', freq: 1, amp: 25 }, y: { wave: 'cosine', freq: 0.8, amp: 15 } } },
+    'drift':         { type: 'displace', params: { x: { wave: 'sine', freq: 0.3, amp: 15 }, y: { wave: 'sine', freq: 0.2, amp: 10, phase: 1.2 } } },
+    'pan left':      { type: 'displace', params: { x: { from: 0, to: -60 }, y: 0 } },
+    'pan right':     { type: 'displace', params: { x: { from: 0, to: 60 }, y: 0 } },
+    'pan up':        { type: 'displace', params: { x: 0, y: { from: 0, to: -40 } } },
+    'pan down':      { type: 'displace', params: { x: 0, y: { from: 0, to: 40 } } },
+    'slide':         { type: 'displace', params: { x: { from: -30, to: 30 }, y: 0 } },
+    'float':         { type: 'displace', params: { x: { wave: 'sine', freq: 0.25, amp: 12 }, y: { wave: 'cosine', freq: 0.2, amp: 8 } } },
+    'shake':         { type: 'displace', params: { x: { wave: 'noise', freq: 10, amp: 15, seed: 1 }, y: { wave: 'noise', freq: 10, amp: 12, seed: 2 } } },
+    'jitter':        { type: 'displace', params: { x: { wave: 'noise', freq: 14, amp: 10, seed: 5 }, y: { wave: 'noise', freq: 14, amp: 8, seed: 6 } } },
+    'earthquake':    { type: 'displace', params: { x: { wave: 'noise', freq: 8, amp: 40, seed: 1 }, y: { wave: 'noise', freq: 8, amp: 35, seed: 2 } } },
+    'vibrate':       { type: 'displace', params: { x: { wave: 'sine', freq: 20, amp: 5 }, y: { wave: 'sine', freq: 20, amp: 5, phase: 1 } } },
+    'handheld':      { type: 'displace', params: { x: { wave: 'noise', freq: 4, amp: 6, seed: 10 }, y: { wave: 'noise', freq: 4, amp: 5, seed: 11 } } },
 
-    // Pulse / Beat
-    'pulse':          { type: 'scaleUniform', params: { amount: { wave: 'sine', freq: 2, amp: 0.05 } } },
-    'breathe':        { type: 'scaleUniform', params: { amount: { wave: 'sine', freq: 0.5, amp: 0.04 } } },
-    'heartbeat':      { type: 'scaleUniform', params: { amount: { wave: 'sine', freq: 3.5, amp: 0.05 } } },
-    'throb':          { type: 'scaleUniform', params: { amount: { wave: 'sine', freq: 2.5, amp: 0.06 } } },
+    // --- Chromatic Aberration ---
+    'chromatic':         { type: 'chromatic', params: { r: 2, b: -2 } },
+    'chromatic aberration': { type: 'chromatic', params: { r: 3, b: -3 } },
+    'color fringe':      { type: 'chromatic', params: { r: 2.5, b: -2.5 } },
+    'prism':             { type: 'chromatic', params: { r: { wave: 'sine', freq: 1, amp: 3 }, b: { wave: 'sine', freq: 1, amp: -3 } } },
 
-    // Blur
-    'blur':           { type: 'blur', params: { amount: { from: 0, to: 4 } } },
-    'focus':          { type: 'blur', params: { amount: { from: 6, to: 0 } } },
-    'defocus':        { type: 'blur', params: { amount: { from: 0, to: 6 } } },
-    'soft':           { type: 'blur', params: { amount: { wave: 'sine', freq: 0.5, amp: 2, offset: 1 } } },
+    // --- RGB Split ---
+    'rgb split':     { type: 'rgbSplit', params: { amount: 10, angle: 0 } },
+    'color split':   { type: 'rgbSplit', params: { amount: 12, angle: 0 } },
+    'channel shift': { type: 'rgbSplit', params: { amount: { wave: 'sine', freq: 1.5, amp: 8 }, angle: { wave: 'sawtooth', freq: 0.3, amp: 180 } } },
+    'rgb':           { type: 'rgbSplit', params: { amount: 8, angle: 0 } },
 
-    // Color
-    'flash':          { type: 'brightness', params: { amount: { wave: 'sine', freq: 3, amp: 30 } } },
-    'flicker':        { type: 'brightness', params: { amount: { wave: 'noise', freq: 8, amp: 15, octaves: 2, seed: 50 } } },
-    'fade in':        { type: 'opacity', params: { amount: { from: -1, to: 0 } } },
-    'fade out':       { type: 'opacity', params: { amount: { from: 0, to: -1 } } },
-    'color shift':    { type: 'hueRotate', params: { angle: { from: 0, to: 180 } } },
-    'rainbow':        { type: 'hueRotate', params: { angle: { from: 0, to: 360 } } },
-    'warm':           { type: 'hueRotate', params: { angle: { wave: 'sine', freq: 0.3, amp: 15, offset: 10 } } },
-    'cool':           { type: 'hueRotate', params: { angle: { wave: 'sine', freq: 0.3, amp: 15, offset: -10 } } },
-    'desaturate':     { type: 'saturate', params: { amount: { from: 0, to: -60 } } },
-    'oversaturate':   { type: 'saturate', params: { amount: { from: 0, to: 60 } } },
-    'brighten':       { type: 'brightness', params: { amount: { from: 0, to: 30 } } },
-    'darken':         { type: 'brightness', params: { amount: { from: 0, to: -30 } } },
+    // --- Glitch ---
+    'glitch':        { type: 'glitch', params: { intensity: { wave: 'noise', freq: 5, amp: 0.8, seed: 42 }, seed: { wave: 'sawtooth', freq: 10, amp: 200 } } },
+    'corrupt':       { type: 'glitch', params: { intensity: { wave: 'noise', freq: 3, amp: 1.2, seed: 10 }, seed: { wave: 'sawtooth', freq: 8, amp: 150 } } },
+    'digital':       { type: 'glitch', params: { intensity: { wave: 'square', freq: 4, amp: 0.6, offset: 0.2 }, seed: { wave: 'sawtooth', freq: 12, amp: 200 } } },
+    'data':          { type: 'glitch', params: { intensity: 0.7, seed: { wave: 'sawtooth', freq: 10, amp: 200 } } },
+    'broken':        { type: 'glitch', params: { intensity: { from: 0, to: 1.5 }, seed: { wave: 'sawtooth', freq: 15, amp: 300 } } },
+    'vhs':           { type: 'glitch', params: { intensity: { wave: 'noise', freq: 2, amp: 0.4, offset: 0.2, seed: 5 }, seed: { wave: 'sawtooth', freq: 6, amp: 100 } } },
 
-    // Skew / Distort
-    'skew':           { type: 'skew', params: { x: { wave: 'sine', freq: 1, amp: 3 }, y: 0 } },
-    'distort':        { type: 'skew', params: { x: { wave: 'noise', freq: 3, amp: 4, octaves: 2, seed: 70 }, y: { wave: 'noise', freq: 3, amp: 2, octaves: 2, seed: 71 } } },
-    'warp':           { type: 'skew', params: { x: { wave: 'sine', freq: 0.8, amp: 5 }, y: { wave: 'cosine', freq: 0.6, amp: 3 } } },
+    // --- Pixelate ---
+    'pixelate':      { type: 'pixelate', params: { amount: { from: 1, to: 15 } } },
+    'mosaic':        { type: 'pixelate', params: { amount: { wave: 'sine', freq: 0.5, amp: 8, offset: 4 } } },
+    'pixel':         { type: 'pixelate', params: { amount: { from: 1, to: 10 } } },
+    'blocky':        { type: 'pixelate', params: { amount: { wave: 'square', freq: 2, amp: 6, offset: 3 } } },
+    'low res':       { type: 'pixelate', params: { amount: 8 } },
 
-    // Glitch
-    'glitch':         { type: 'shake', params: { intensityX: { wave: 'square', freq: 6, amp: 12 }, intensityY: { wave: 'square', freq: 4, amp: 4, phase: 0.5 } } },
+    // --- Pixel Stretch ---
+    'pixel stretch': { type: 'pixelStretch', params: { x: 2.5, y: 0, pos: 0.5 } },
+    'stretch':       { type: 'pixelStretch', params: { x: { from: 0, to: 3 }, y: 0, pos: { wave: 'sine', freq: 0.4, amp: 0.3, offset: 0.5 } } },
+    'smear':         { type: 'smear', params: { amount: { wave: 'sine', freq: 0.4, amp: 1.2, offset: 0.5 }, angle: 0 } },
+    'drag':          { type: 'smear', params: { amount: 1.0, angle: { from: 0, to: 90 } } },
 
-    // Post
-    'vignette':       { type: 'vignette', params: { intensity: 0.5 } },
-    'cinema':         { type: 'vignette', params: { intensity: 0.35 } },
+    // --- Liquify ---
+    'liquify':       { type: 'liquify', params: { amount: { wave: 'sine', freq: 0.4, amp: 4 }, centerX: 0.5, centerY: 0.5, radius: 0.45 } },
+    'swirl':         { type: 'liquify', params: { amount: { from: 0, to: 6 }, centerX: 0.5, centerY: 0.5, radius: 0.5 } },
+    'twist':         { type: 'liquify', params: { amount: { wave: 'sine', freq: 0.5, amp: 5 }, centerX: 0.5, centerY: 0.5, radius: 0.4 } },
+    'vortex':        { type: 'liquify', params: { amount: { from: 0, to: 8 }, centerX: 0.5, centerY: 0.5, radius: 0.6 } },
 
-    // Bounce
-    'bounce':         { type: 'translate', params: { x: 0, y: { wave: 'sine', freq: 2, amp: 20 } } },
+    // --- Fracture ---
+    'fracture':      { type: 'fracture', params: { amount: { from: 0, to: 0.8 } } },
+    'shatter':       { type: 'fracture', params: { amount: { from: 0, to: 1.0 } } },
+    'tile':          { type: 'fracture', params: { amount: { wave: 'sine', freq: 0.5, amp: 0.4, offset: 0.3 } } },
+    'fragment':      { type: 'fracture', params: { amount: { from: 0, to: 0.6 } } },
+
+    // --- Zoom ---
+    'zoom in':       { type: 'zoom', params: { amount: { from: 0, to: 0.25 } } },
+    'zoom out':      { type: 'zoom', params: { amount: { from: 0.25, to: 0 } } },
+    'zoom':          { type: 'zoom', params: { amount: { from: 0, to: 0.15 } } },
+    'punch':         { type: 'zoom', params: { amount: { from: 0, to: 0.35 } } },
+    'grow':          { type: 'zoom', params: { amount: { from: 0, to: 0.1 } } },
+
+    // --- Rotate ---
+    'rotate':        { type: 'rotate', params: { angle: { from: 0, to: 15 } } },
+    'spin':          { type: 'rotate', params: { angle: { from: 0, to: 360 } } },
+    'tilt':          { type: 'rotate', params: { angle: { wave: 'sine', freq: 0.6, amp: 5 } } },
+    'rock':          { type: 'rotate', params: { angle: { wave: 'sine', freq: 0.8, amp: 4 } } },
+
+    // --- Blur ---
+    'blur':          { type: 'blur', params: { amount: { from: 0, to: 5 }, angle: 0 } },
+    'motion blur':   { type: 'blur', params: { amount: { wave: 'sine', freq: 1, amp: 4 }, angle: 0 } },
+    'radial blur':   { type: 'blur', params: { amount: { from: 0, to: 6 }, angle: { from: 0, to: 360 } } },
+    'defocus':       { type: 'blur', params: { amount: { from: 6, to: 0 }, angle: 0 } },
+    'focus':         { type: 'blur', params: { amount: { from: 6, to: 0 }, angle: 0 } },
+
+    // --- Color ---
+    'flash':         { type: 'brightness', params: { amount: { wave: 'sine', freq: 3, amp: 0.3 } } },
+    'flicker':       { type: 'brightness', params: { amount: { wave: 'noise', freq: 8, amp: 0.15, seed: 50 } } },
+    'brighten':      { type: 'brightness', params: { amount: { from: 0, to: 0.3 } } },
+    'darken':        { type: 'brightness', params: { amount: { from: 0, to: -0.3 } } },
+    'color shift':   { type: 'hueShift', params: { amount: { from: 0, to: 0.5 } } },
+    'rainbow':       { type: 'hueShift', params: { amount: { from: 0, to: 1 } } },
+    'hue':           { type: 'hueShift', params: { amount: { wave: 'sine', freq: 0.3, amp: 0.15 } } },
+    'desaturate':    { type: 'saturation', params: { amount: { from: 0, to: -0.8 } } },
+    'oversaturate':  { type: 'saturation', params: { amount: { from: 0, to: 0.6 } } },
+
+    // --- Post ---
+    'vignette':      { type: 'vignette', params: { intensity: 0.5 } },
+    'cinema':        { type: 'vignette', params: { intensity: 0.35 } },
+    'cinematic':     { type: 'vignette', params: { intensity: 0.3 } },
   };
 
   // Intensity modifiers
   const INTENSITY_MAP = {
-    'very subtle': 0.3, 'barely': 0.2, 'slightly': 0.4, 'subtle': 0.5, 'gentle': 0.5, 'soft': 0.6, 'light': 0.6,
-    'moderate': 1, 'normal': 1,
-    'strong': 1.5, 'heavy': 1.6, 'intense': 1.8, 'aggressive': 2, 'extreme': 2.5, 'violent': 3,
-    'slow': 0.5, 'fast': 1.8, 'rapid': 2.2, 'quick': 1.6
+    'very subtle': 0.25, 'barely': 0.2, 'slightly': 0.4, 'subtle': 0.5, 'gentle': 0.5,
+    'soft': 0.6, 'light': 0.6, 'moderate': 1, 'normal': 1,
+    'strong': 1.6, 'heavy': 1.8, 'intense': 2, 'aggressive': 2.5, 'extreme': 3, 'violent': 3.5,
+    'massive': 3, 'crazy': 2.5, 'wild': 2.5
   };
 
-  // Speed modifiers (affect frequency)
+  // Speed modifiers
   const SPEED_MAP = {
     'very slow': 0.3, 'slow': 0.5, 'slowly': 0.5,
-    'medium': 1, 'moderate': 1,
+    'medium': 1, 'moderate speed': 1,
     'fast': 2, 'quick': 1.8, 'rapid': 2.5, 'very fast': 3
   };
 
@@ -125,6 +163,7 @@ const PromptParser = (() => {
           scaled.from *= intensityMult;
           scaled.to *= intensityMult;
         }
+        if ('offset' in scaled) scaled.offset *= intensityMult;
         result[key] = scaled;
       } else {
         result[key] = val;
@@ -159,16 +198,18 @@ const PromptParser = (() => {
     // Sort keywords by length (longer first for better matching)
     const sortedKeywords = Object.keys(MOTION_KEYWORDS).sort((a, b) => b.length - a.length);
 
+    const usedTypes = new Set();
+
     for (const keyword of sortedKeywords) {
       if (text.includes(keyword) && !matched.has(keyword)) {
-        // Avoid duplicate layer types for similar keywords
         const def = MOTION_KEYWORDS[keyword];
-        const alreadyHasType = layers.some(l => l.type === def.type);
 
-        // Allow multiple of same type only for specific combos
-        if (alreadyHasType && !['translate', 'shake'].includes(def.type)) continue;
+        // Avoid duplicate types unless it's displace (can layer)
+        if (usedTypes.has(def.type) && def.type !== 'displace') continue;
 
         matched.add(keyword);
+        usedTypes.add(def.type);
+
         layers.push({
           type: def.type,
           params: scaleParams(deepClone(def.params), intensity, speed)
@@ -176,20 +217,52 @@ const PromptParser = (() => {
       }
     }
 
-    // If nothing matched, create a gentle default
+    // If nothing matched, create a gentle noise warp + chromatic default
     if (layers.length === 0) {
       layers.push(
-        { type: 'scaleUniform', params: { amount: { from: 0, to: 0.08 * intensity } } },
-        { type: 'translate', params: { x: { wave: 'sine', freq: 0.3 * speed, amp: 10 * intensity }, y: { wave: 'sine', freq: 0.2 * speed, amp: 6 * intensity, phase: 1 } } }
+        {
+          type: 'noiseWarp',
+          params: {
+            amount: { wave: 'sine', freq: 0.3 * speed, amp: 0.05 * intensity, offset: 0.03 * intensity },
+            freq: 3,
+            speed: 0.8 * speed
+          }
+        },
+        {
+          type: 'displace',
+          params: {
+            x: { wave: 'sine', freq: 0.3 * speed, amp: 10 * intensity },
+            y: { wave: 'cosine', freq: 0.2 * speed, amp: 6 * intensity }
+          }
+        },
+        {
+          type: 'chromatic',
+          params: {
+            r: intensity * 1.0,
+            b: intensity * -1.0
+          }
+        }
       );
     }
 
-    // Detect easing suggestions
+    // Auto-add chromatic aberration for glitch/destructive effects if not present
+    if (!usedTypes.has('chromatic') && !usedTypes.has('rgbSplit')) {
+      const hasDestructive = usedTypes.has('glitch') || usedTypes.has('fracture') ||
+                             usedTypes.has('pixelate') || usedTypes.has('displace');
+      if (hasDestructive) {
+        layers.push({
+          type: 'chromatic',
+          params: { r: intensity * 1.5, b: intensity * -1.5 }
+        });
+      }
+    }
+
+    // Detect easing
     let easing = 'easeInOut';
     if (text.includes('bounce') || text.includes('bouncy')) easing = 'bounce';
     else if (text.includes('elastic') || text.includes('spring')) easing = 'easeInOutElastic';
     else if (text.includes('smooth') || text.includes('gentle')) easing = 'easeInOut';
-    else if (text.includes('sharp') || text.includes('hard') || text.includes('abrupt')) easing = 'easeIn';
+    else if (text.includes('sharp') || text.includes('hard') || text.includes('abrupt') || text.includes('sudden')) easing = 'easeIn';
     else if (text.includes('linear') || text.includes('constant') || text.includes('steady')) easing = 'linear';
 
     return {

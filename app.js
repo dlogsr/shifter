@@ -1,12 +1,12 @@
 /**
  * Shifter App Controller
- * Handles UI, image upload, preset selection, prompt generation, playback, and export.
+ * Wires UI to WebGL ShaderEngine: image upload, presets, prompt, playback, export.
  */
 
 (function () {
   'use strict';
 
-  // ===== DOM Elements =====
+  // ===== DOM =====
   const canvas = document.getElementById('canvas');
   const canvasWrapper = document.getElementById('canvas-wrapper');
   const uploadOverlay = document.getElementById('upload-overlay');
@@ -39,13 +39,13 @@
   const exportProgress = document.getElementById('export-progress');
 
   // ===== Engine =====
-  const engine = new MotionEngine(canvas);
+  const engine = new ShaderEngine(canvas);
 
   let currentPresetId = null;
   let currentEffect = null;
   let imageLoaded = false;
 
-  // ===== Initialize Presets =====
+  // ===== Presets =====
   function renderPresets() {
     presetList.innerHTML = '';
     PRESETS.forEach(preset => {
@@ -73,18 +73,22 @@
       layers: JSON.parse(JSON.stringify(preset.layers))
     };
 
-    // Update active state
     document.querySelectorAll('.preset-item').forEach(el => {
       el.classList.toggle('active', el.dataset.id === preset.id);
     });
 
-    // Set easing
     if (preset.defaultEasing) {
       easingSelect.value = preset.defaultEasing;
       engine.easing = preset.defaultEasing;
     }
 
     applyEffect();
+
+    // Auto-play on preset select if image is loaded
+    if (imageLoaded && !engine.playing) {
+      engine.play();
+      setPlayingUI(true);
+    }
   }
 
   function applyEffect() {
@@ -94,7 +98,6 @@
     updateEffectStack();
     updateParams();
 
-    // Enable playback if image loaded
     if (imageLoaded) {
       btnPlay.disabled = false;
       btnStop.disabled = false;
@@ -105,21 +108,23 @@
 
   // ===== Effect Stack Display =====
   const LAYER_COLORS = {
-    translate: '#6366f1', scale: '#8b5cf6', scaleUniform: '#8b5cf6',
-    rotate: '#ec4899', skew: '#f59e0b', shake: '#ef4444',
-    blur: '#06b6d4', brightness: '#fbbf24', contrast: '#f97316',
-    saturate: '#10b981', hueRotate: '#a78bfa', opacity: '#64748b',
-    vignette: '#334155', crop: '#14b8a6'
+    displace: '#6366f1', noiseWarp: '#8b5cf6', wave: '#06b6d4',
+    ripple: '#3b82f6', chromatic: '#ec4899', rgbSplit: '#f43f5e',
+    glitch: '#ef4444', pixelate: '#f59e0b', pixelStretch: '#f97316',
+    zoom: '#10b981', rotate: '#a78bfa', blur: '#64748b',
+    brightness: '#fbbf24', contrast: '#f97316', saturation: '#10b981',
+    hueShift: '#a78bfa', vignette: '#334155', liquify: '#8b5cf6',
+    smear: '#ec4899', fracture: '#ef4444'
   };
 
   function updateEffectStack() {
     if (!currentEffect || !currentEffect.layers.length) {
-      effectStack.innerHTML = '<p class="empty-state">Select a preset or generate an effect to begin.</p>';
+      effectStack.innerHTML = '<p class="empty-state">Select a preset or describe a motion effect.</p>';
       return;
     }
 
     effectStack.innerHTML = '';
-    currentEffect.layers.forEach((layer, i) => {
+    currentEffect.layers.forEach(layer => {
       const el = document.createElement('div');
       el.className = 'effect-layer';
       const color = LAYER_COLORS[layer.type] || '#6366f1';
@@ -137,13 +142,19 @@
     const parts = [];
     for (const [key, val] of Object.entries(layer.params || {})) {
       if (typeof val === 'number') {
-        parts.push(`${key}: ${val.toFixed(1)}`);
+        parts.push(`${key}: ${formatNum(val)}`);
       } else if (val && typeof val === 'object') {
         if (val.wave) parts.push(`${key}: ${val.wave}`);
-        else if ('from' in val) parts.push(`${key}: ${val.from.toFixed(0)}→${val.to.toFixed(0)}`);
+        else if ('from' in val) parts.push(`${key}: ${formatNum(val.from)}→${formatNum(val.to)}`);
       }
     }
     return parts.join(', ') || '—';
+  }
+
+  function formatNum(n) {
+    if (Math.abs(n) >= 10) return n.toFixed(0);
+    if (Math.abs(n) >= 1) return n.toFixed(1);
+    return n.toFixed(3);
   }
 
   // ===== Parameter Controls =====
@@ -159,22 +170,30 @@
     currentEffect.layers.forEach((layer, li) => {
       for (const [key, val] of Object.entries(layer.params || {})) {
         if (typeof val === 'number') {
-          addParamSlider(layer, li, key, val, -100, 100);
+          const absMax = Math.max(Math.abs(val) * 3, 1);
+          addParamSlider(layer, key, val, -absMax, absMax, (v) => {
+            layer.params[key] = v;
+            applyLiveUpdate();
+          });
         } else if (val && typeof val === 'object') {
           if ('amp' in val) {
-            addParamSlider(layer, li, `${key} amp`, val.amp, 0, Math.max(50, val.amp * 3), (v) => {
+            const maxAmp = Math.max(Math.abs(val.amp) * 3, 0.5);
+            addParamSlider(layer, `${key} amp`, val.amp, 0, maxAmp, (v) => {
               val.amp = v;
               applyLiveUpdate();
             });
           }
           if ('freq' in val) {
-            addParamSlider(layer, li, `${key} freq`, val.freq, 0.1, Math.max(25, val.freq * 3), (v) => {
+            const maxFreq = Math.max(val.freq * 3, 2);
+            addParamSlider(layer, `${key} freq`, val.freq, 0.1, maxFreq, (v) => {
               val.freq = v;
               applyLiveUpdate();
             });
           }
           if ('from' in val && 'to' in val) {
-            addParamSlider(layer, li, `${key} range`, val.to - val.from, -200, 200, (v) => {
+            const range = val.to - val.from;
+            const absMax = Math.max(Math.abs(range) * 2, 1);
+            addParamSlider(layer, `${key} range`, range, -absMax, absMax, (v) => {
               val.to = val.from + v;
               applyLiveUpdate();
             });
@@ -184,15 +203,14 @@
     });
   }
 
-  function addParamSlider(layer, layerIndex, label, value, min, max, onChange) {
+  function addParamSlider(layer, label, value, min, max, onChange) {
     const row = document.createElement('div');
     row.className = 'param-row';
-
-    const step = (max - min) > 10 ? 0.5 : 0.01;
+    const step = (max - min) > 10 ? 0.5 : 0.001;
     row.innerHTML = `
       <div class="param-label">
         <span>${layer.type} · ${label}</span>
-        <span class="param-value">${typeof value === 'number' ? value.toFixed(2) : value}</span>
+        <span class="param-value">${formatNum(value)}</span>
       </div>
       <input type="range" min="${min}" max="${max}" step="${step}" value="${value}">
     `;
@@ -202,7 +220,7 @@
 
     input.addEventListener('input', () => {
       const v = parseFloat(input.value);
-      valDisplay.textContent = v.toFixed(2);
+      valDisplay.textContent = formatNum(v);
       if (onChange) onChange(v);
     });
 
@@ -225,34 +243,14 @@
     img.onload = () => {
       imageLoaded = true;
       uploadOverlay.style.display = 'none';
+      engine.setImage(img);
 
-      // Limit canvas size for performance
-      const maxDim = 1920;
-      let w = img.naturalWidth;
-      let h = img.naturalHeight;
-      if (w > maxDim || h > maxDim) {
-        const scale = maxDim / Math.max(w, h);
-        w = Math.round(w * scale);
-        h = Math.round(h * scale);
+      if (currentEffect) {
+        btnPlay.disabled = false;
+        btnStop.disabled = false;
+        btnExport.disabled = false;
+        easingSection.style.display = '';
       }
-
-      // Create a resized version
-      const tmpCanvas = document.createElement('canvas');
-      tmpCanvas.width = w;
-      tmpCanvas.height = h;
-      tmpCanvas.getContext('2d').drawImage(img, 0, 0, w, h);
-
-      const resizedImg = new Image();
-      resizedImg.onload = () => {
-        engine.setImage(resizedImg);
-        if (currentEffect) {
-          btnPlay.disabled = false;
-          btnStop.disabled = false;
-          btnExport.disabled = false;
-          easingSection.style.display = '';
-        }
-      };
-      resizedImg.src = tmpCanvas.toDataURL();
     };
     img.src = URL.createObjectURL(file);
   }
@@ -263,27 +261,28 @@
   });
 
   // Drag & Drop
-  uploadOverlay.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    uploadOverlay.classList.add('drag-over');
+  ['dragover', 'dragenter'].forEach(evt => {
+    uploadOverlay.addEventListener(evt, (e) => {
+      e.preventDefault();
+      uploadOverlay.classList.add('drag-over');
+    });
+    canvasWrapper.addEventListener(evt, (e) => e.preventDefault());
   });
-  uploadOverlay.addEventListener('dragleave', () => {
-    uploadOverlay.classList.remove('drag-over');
-  });
+
+  uploadOverlay.addEventListener('dragleave', () => uploadOverlay.classList.remove('drag-over'));
+
   uploadOverlay.addEventListener('drop', (e) => {
     e.preventDefault();
     uploadOverlay.classList.remove('drag-over');
     if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
   });
 
-  // Also allow drop on canvas wrapper when image already loaded
-  canvasWrapper.addEventListener('dragover', (e) => { e.preventDefault(); });
   canvasWrapper.addEventListener('drop', (e) => {
     e.preventDefault();
     if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
   });
 
-  // ===== Prompt Generation =====
+  // ===== Prompt =====
   btnGenerate.addEventListener('click', generateFromPrompt);
   promptInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -300,10 +299,8 @@
     currentPresetId = null;
     currentEffect = effect;
 
-    // Deselect presets
     document.querySelectorAll('.preset-item').forEach(el => el.classList.remove('active'));
 
-    // Apply easing from parser
     if (effect.defaultEasing) {
       easingSelect.value = effect.defaultEasing;
       engine.easing = effect.defaultEasing;
@@ -311,7 +308,6 @@
 
     applyEffect();
 
-    // Auto-play if image loaded
     if (imageLoaded && !engine.playing) {
       engine.play();
       setPlayingUI(true);
@@ -344,33 +340,25 @@
     iconPause.style.display = playing ? '' : 'none';
   }
 
-  // Timeline
   engine.onFrame = (progress) => {
     const pct = (progress * 100).toFixed(1);
     timelineProgress.style.width = pct + '%';
     timelineHandle.style.left = pct + '%';
-
-    const current = progress * engine.duration;
-    const total = engine.duration;
-    timeDisplay.textContent = `${formatTime(current)} / ${formatTime(total)}`;
+    const cur = progress * engine.duration;
+    timeDisplay.textContent = `${fmtTime(cur)} / ${fmtTime(engine.duration)}`;
   };
 
-  function formatTime(s) {
-    const mins = Math.floor(s / 60);
-    const secs = Math.floor(s % 60);
+  function fmtTime(s) {
+    const m = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
     const ms = Math.floor((s % 1) * 10);
-    return `${mins}:${String(secs).padStart(2, '0')}.${ms}`;
+    return `${m}:${String(sec).padStart(2, '0')}.${ms}`;
   }
 
   // Timeline scrubbing
   let scrubbing = false;
-  timelineTrack.addEventListener('mousedown', (e) => {
-    scrubbing = true;
-    scrubTo(e);
-  });
-  document.addEventListener('mousemove', (e) => {
-    if (scrubbing) scrubTo(e);
-  });
+  timelineTrack.addEventListener('mousedown', (e) => { scrubbing = true; scrubTo(e); });
+  document.addEventListener('mousemove', (e) => { if (scrubbing) scrubTo(e); });
   document.addEventListener('mouseup', () => { scrubbing = false; });
 
   function scrubTo(e) {
@@ -389,28 +377,20 @@
   // Easing
   easingSelect.addEventListener('change', () => {
     engine.easing = easingSelect.value;
-    if (!engine.playing && imageLoaded) {
-      engine.drawFrame(engine.currentTime);
-    }
+    if (!engine.playing && imageLoaded) engine.drawFrame(engine.currentTime);
   });
 
   // ===== Export =====
-  let exportFormat = 'gif';
+  let exportFormat = 'webm';
 
   btnExport.addEventListener('click', () => {
     exportModal.style.display = '';
     exportProgress.style.display = 'none';
   });
 
-  btnCancelExport.addEventListener('click', () => {
-    exportModal.style.display = 'none';
-  });
+  btnCancelExport.addEventListener('click', () => { exportModal.style.display = 'none'; });
+  exportModal.addEventListener('click', (e) => { if (e.target === exportModal) exportModal.style.display = 'none'; });
 
-  exportModal.addEventListener('click', (e) => {
-    if (e.target === exportModal) exportModal.style.display = 'none';
-  });
-
-  // Format buttons
   document.querySelectorAll('[data-format]').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('[data-format]').forEach(b => b.classList.remove('active'));
@@ -421,50 +401,29 @@
 
   btnStartExport.addEventListener('click', async () => {
     const fps = parseInt(document.getElementById('export-fps').value);
-    const resMult = parseFloat(document.getElementById('export-resolution').value);
-
     exportProgress.style.display = '';
     btnStartExport.disabled = true;
 
-    // Pause playback during export
     const wasPlaying = engine.playing;
     if (wasPlaying) engine.pause();
 
-    // Set up export canvas at target resolution
-    const origW = canvas.width;
-    const origH = canvas.height;
-    const exportW = Math.round(origW * resMult);
-    const exportH = Math.round(origH * resMult);
-
-    canvas.width = exportW;
-    canvas.height = exportH;
-
-    if (exportFormat === 'webm') {
-      await exportWebM(fps);
-    } else if (exportFormat === 'gif') {
-      await exportGif(fps);
-    } else {
+    if (exportFormat === 'frames') {
       await exportFrames(fps);
+    } else {
+      await exportVideo(fps);
     }
-
-    // Restore canvas
-    canvas.width = origW;
-    canvas.height = origH;
-    engine.drawFrame(engine.currentTime);
 
     btnStartExport.disabled = false;
     exportModal.style.display = 'none';
-
-    if (wasPlaying) engine.play();
+    if (wasPlaying) { engine.play(); setPlayingUI(true); }
   });
 
-  async function exportWebM(fps) {
-    const stream = canvas.captureStream(fps);
-    const recorder = new MediaRecorder(stream, {
-      mimeType: 'video/webm;codecs=vp9',
-      videoBitsPerSecond: 8000000
-    });
+  async function exportVideo(fps) {
+    const stream = canvas.captureStream(0); // 0 = manual frame push
+    let mimeType = 'video/webm;codecs=vp9';
+    if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/webm';
 
+    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 8000000 });
     const chunks = [];
     recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
 
@@ -476,7 +435,6 @@
       };
 
       recorder.start();
-
       const totalFrames = Math.ceil(engine.duration * fps);
       let frame = 0;
 
@@ -489,71 +447,21 @@
         const progress = frame / totalFrames;
         engine.drawFrame(progress);
 
+        // Request frame capture
+        if (stream.getVideoTracks()[0].requestFrame) {
+          stream.getVideoTracks()[0].requestFrame();
+        }
+
         progressFill.style.width = (progress * 100) + '%';
         progressText.textContent = `Rendering frame ${frame}/${totalFrames}...`;
 
         frame++;
-        requestAnimationFrame(renderNext);
+        // Use a small timeout to give MediaRecorder time to capture
+        setTimeout(renderNext, 1000 / fps);
       }
 
       renderNext();
     });
-  }
-
-  async function exportGif(fps) {
-    // Use frame-by-frame canvas capture and convert to GIF using a basic approach
-    // We'll generate frames as data URLs and combine them using an in-page solution
-    const totalFrames = Math.ceil(engine.duration * fps);
-    const frameDelay = Math.round(1000 / fps);
-
-    // Since we don't have a GIF library, we'll export as WebM if supported,
-    // otherwise export individual frames
-    if (typeof MediaRecorder !== 'undefined') {
-      // Try WebM first, rename as fallback
-      const stream = canvas.captureStream(fps);
-
-      let mimeType = 'video/webm;codecs=vp9';
-      if (!MediaRecorder.isTypeSupported(mimeType)) {
-        mimeType = 'video/webm';
-      }
-
-      const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 8000000 });
-      const chunks = [];
-      recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
-
-      return new Promise((resolve) => {
-        recorder.onstop = () => {
-          const blob = new Blob(chunks, { type: 'video/webm' });
-          downloadBlob(blob, 'shifter-animation.webm');
-          progressText.textContent = 'Exported as WebM (GIF encoding requires a library)';
-          resolve();
-        };
-
-        recorder.start();
-
-        let frame = 0;
-        function renderNext() {
-          if (frame > totalFrames) {
-            recorder.stop();
-            return;
-          }
-
-          const progress = frame / totalFrames;
-          engine.drawFrame(progress);
-
-          progressFill.style.width = (progress * 100) + '%';
-          progressText.textContent = `Rendering frame ${frame}/${totalFrames}...`;
-
-          frame++;
-          requestAnimationFrame(renderNext);
-        }
-
-        renderNext();
-      });
-    } else {
-      // Fallback to frames
-      return exportFrames(fps);
-    }
   }
 
   async function exportFrames(fps) {
@@ -566,14 +474,10 @@
       progressFill.style.width = (progress * 100) + '%';
       progressText.textContent = `Saving frame ${i}/${totalFrames}...`;
 
-      // Download each frame
       const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
       downloadBlob(blob, `frame-${String(i).padStart(4, '0')}.png`);
-
-      // Small delay to not overwhelm the browser
-      await new Promise(r => setTimeout(r, 30));
+      await new Promise(r => setTimeout(r, 50));
     }
-
     progressText.textContent = `Done! ${totalFrames + 1} frames exported.`;
   }
 
@@ -591,19 +495,10 @@
   // ===== Keyboard Shortcuts =====
   document.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
-
     switch (e.code) {
-      case 'Space':
-        e.preventDefault();
-        btnPlay.click();
-        break;
-      case 'Escape':
-        engine.stop();
-        setPlayingUI(false);
-        break;
-      case 'KeyL':
-        btnLoop.click();
-        break;
+      case 'Space': e.preventDefault(); btnPlay.click(); break;
+      case 'Escape': engine.stop(); setPlayingUI(false); break;
+      case 'KeyL': btnLoop.click(); break;
     }
   });
 
@@ -611,5 +506,9 @@
   renderPresets();
   engine.onFrame?.(0);
   durationLabel.textContent = engine.duration.toFixed(1) + 's';
+
+  // Default the export format button
+  document.querySelectorAll('[data-format]').forEach(b => b.classList.remove('active'));
+  document.querySelector('[data-format="webm"]').classList.add('active');
 
 })();
