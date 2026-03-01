@@ -44,8 +44,12 @@
   const apiKeyInput = document.getElementById('api-key-input');
   const btnSaveKey = document.getElementById('btn-save-key');
   const apiKeyStatus = document.getElementById('api-key-status');
+  const btnQuickMode = document.getElementById('btn-quick-mode');
   const btnClickMode = document.getElementById('btn-click-mode');
   const btnTextMode = document.getElementById('btn-text-mode');
+  const quickSelectSection = document.getElementById('quick-select-section');
+  const brushSizeSlider = document.getElementById('brush-size');
+  const brushSizeLabel = document.getElementById('brush-size-label');
   const textSegmentSection = document.getElementById('text-segment-section');
   const textSegmentInput = document.getElementById('text-segment-input');
   const btnTextSegment = document.getElementById('btn-text-segment');
@@ -73,7 +77,7 @@
   let sourceImage = null; // original <img> for SAM
 
   // Segmentation state
-  let segMode = null; // 'click' | 'text' | null
+  let segMode = null; // 'quick' | 'click' | 'text' | null
   let clickPoints = [];
   let currentMasks = null;
   let currentMaskCanvas = null;
@@ -381,11 +385,17 @@
 
   function updateSamButtons() {
     const ready = SAM.hasApiKey() && imageLoaded;
+    btnQuickMode.disabled = !ready;
     btnClickMode.disabled = !ready;
     btnTextMode.disabled = !ready;
   }
 
   // Mode switching
+  btnQuickMode.addEventListener('click', () => {
+    if (segMode === 'quick') { exitSegMode(); return; }
+    enterQuickMode();
+  });
+
   btnClickMode.addEventListener('click', () => {
     if (segMode === 'click') { exitSegMode(); return; }
     enterClickMode();
@@ -395,6 +405,18 @@
     if (segMode === 'text') { exitSegMode(); return; }
     enterTextMode();
   });
+
+  function enterQuickMode() {
+    exitSegMode();
+    segMode = 'quick';
+    btnQuickMode.classList.add('active');
+    quickSelectSection.style.display = '';
+    overlayCanvas.classList.add('interactive', 'brush-cursor');
+
+    if (engine.playing) { engine.pause(); setPlayingUI(false); }
+    engine.drawFrame(engine.currentTime);
+    updateBrushCursor();
+  }
 
   function enterClickMode() {
     exitSegMode();
@@ -418,12 +440,160 @@
 
   function exitSegMode() {
     segMode = null;
+    btnQuickMode.classList.remove('active');
     btnClickMode.classList.remove('active');
     btnTextMode.classList.remove('active');
+    quickSelectSection.style.display = 'none';
     clickPointsSection.style.display = 'none';
     textSegmentSection.style.display = 'none';
-    overlayCanvas.classList.remove('interactive');
+    overlayCanvas.classList.remove('interactive', 'brush-cursor');
     clearOverlay();
+  }
+
+  // ===== Quick Select =====
+  let brushSize = 20;
+  let painting = false;
+  let strokePath = []; // raw pixel coords of the brush stroke
+  let brushCursorPos = null; // current mouse position for brush cursor
+
+  brushSizeSlider.addEventListener('input', () => {
+    brushSize = parseInt(brushSizeSlider.value);
+    brushSizeLabel.textContent = brushSize;
+    updateBrushCursor();
+  });
+
+  function updateBrushCursor() {
+    if (segMode !== 'quick') return;
+    // Use a CSS custom property to drive the cursor size
+    const rect = overlayCanvas.getBoundingClientRect();
+    const displaySize = Math.max(4, brushSize / (overlayCanvas.width / rect.width));
+    overlayCanvas.style.setProperty('--brush-size', displaySize + 'px');
+  }
+
+  function canvasCoord(e) {
+    const rect = overlayCanvas.getBoundingClientRect();
+    const scaleX = overlayCanvas.width / rect.width;
+    const scaleY = overlayCanvas.height / rect.height;
+    return {
+      x: Math.round((e.clientX - rect.left) * scaleX),
+      y: Math.round((e.clientY - rect.top) * scaleY)
+    };
+  }
+
+  overlayCanvas.addEventListener('mousedown', (e) => {
+    if (segMode !== 'quick' || e.button !== 0) return;
+    painting = true;
+    strokePath = [];
+    const pt = canvasCoord(e);
+    strokePath.push(pt);
+    drawBrushStroke();
+  });
+
+  overlayCanvas.addEventListener('mousemove', (e) => {
+    if (segMode === 'quick') {
+      brushCursorPos = canvasCoord(e);
+      if (painting) {
+        strokePath.push(brushCursorPos);
+      }
+      drawBrushStroke();
+    }
+  });
+
+  overlayCanvas.addEventListener('mouseup', () => {
+    if (!painting) return;
+    painting = false;
+    if (strokePath.length > 0) runQuickSegment();
+  });
+
+  overlayCanvas.addEventListener('mouseleave', () => {
+    brushCursorPos = null;
+    if (segMode === 'quick' && !painting) {
+      drawBrushStroke(); // clear cursor
+    }
+    if (!painting) return;
+    painting = false;
+    if (strokePath.length > 0) runQuickSegment();
+  });
+
+  function drawBrushStroke() {
+    const ctx = overlayCanvas.getContext('2d');
+    clearOverlay();
+
+    // Draw existing mask overlay if present
+    if (currentMasks && currentMaskCanvas) {
+      ctx.globalAlpha = 0.3;
+      ctx.drawImage(currentMaskCanvas, 0, 0);
+      ctx.globalAlpha = 1;
+    }
+
+    // Draw the brush stroke
+    if (strokePath.length > 0) {
+      ctx.lineWidth = brushSize;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = 'rgba(99, 102, 241, 0.4)';
+      ctx.beginPath();
+      ctx.moveTo(strokePath[0].x, strokePath[0].y);
+      for (let i = 1; i < strokePath.length; i++) {
+        ctx.lineTo(strokePath[i].x, strokePath[i].y);
+      }
+      ctx.stroke();
+    }
+
+    // Draw brush cursor
+    if (brushCursorPos) {
+      ctx.beginPath();
+      ctx.arc(brushCursorPos.x, brushCursorPos.y, brushSize / 2, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+  }
+
+  function samplePointsFromStroke(path, spacing) {
+    // Sample evenly spaced points along the stroke path
+    const points = [];
+    if (path.length === 0) return points;
+    points.push({ x: path[0].x, y: path[0].y, positive: true });
+    let accumulated = 0;
+    for (let i = 1; i < path.length; i++) {
+      const dx = path[i].x - path[i - 1].x;
+      const dy = path[i].y - path[i - 1].y;
+      accumulated += Math.sqrt(dx * dx + dy * dy);
+      if (accumulated >= spacing) {
+        points.push({ x: path[i].x, y: path[i].y, positive: true });
+        accumulated = 0;
+      }
+    }
+    // Always include the last point
+    const last = path[path.length - 1];
+    if (points.length === 1 || (points[points.length - 1].x !== last.x || points[points.length - 1].y !== last.y)) {
+      points.push({ x: last.x, y: last.y, positive: true });
+    }
+    return points;
+  }
+
+  async function runQuickSegment() {
+    // Sample points along the stroke — spacing proportional to brush size
+    const spacing = Math.max(brushSize * 1.5, 20);
+    const sampled = samplePointsFromStroke(strokePath, spacing);
+    strokePath = [];
+
+    if (sampled.length === 0) return;
+
+    showSegStatus('loading', `Segmenting (${sampled.length} points)...`);
+    try {
+      const cleanCanvas = getCleanCanvas();
+      const masks = await SAM.segmentByPoint(cleanCanvas, sampled);
+      if (masks.length === 0) {
+        showSegStatus('error', 'No objects found. Try painting over the object.');
+        return;
+      }
+      applyMasks(masks);
+      showSegStatus('success', `Found ${masks.length} region(s)`);
+    } catch (err) {
+      showSegStatus('error', err.message);
+    }
   }
 
   // ===== Click-to-Segment =====
