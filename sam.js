@@ -83,39 +83,26 @@ const SAM = (() => {
   }
 
   // Parse API response into polygon masks
+  // Roboflow SAM3 response shape:
+  //   { prompt_results: [{ predictions: [{ masks: [[[x,y], ...]], confidence, format }] }] }
   function parseSegmentResponse(data) {
     const masks = [];
 
-    // Handle different response structures
-    const results = data.prompt_results || data.results || data.predictions || [];
+    const promptResults = data.prompt_results || [];
 
-    // If it's an array of prompt results
-    const promptResults = Array.isArray(results) ? results : [results];
-
-    for (const promptResult of promptResults) {
-      const predictions = promptResult.predictions || promptResult.masks || promptResult || [];
-      const preds = Array.isArray(predictions) ? predictions : [predictions];
-
+    for (const pr of promptResults) {
+      const preds = pr.predictions || [];
       for (const pred of preds) {
-        if (pred.points) {
-          masks.push({
-            points: pred.points.map(p => ({ x: p.x, y: p.y })),
-            confidence: pred.confidence || 1,
-            class: pred.class || 'object'
-          });
-        } else if (pred.polygon) {
-          masks.push({
-            points: pred.polygon.map(p => ({ x: p.x || p[0], y: p.y || p[1] })),
-            confidence: pred.confidence || 1,
-            class: pred.class || 'object'
-          });
-        } else if (pred.segmentation) {
-          // RLE or other format
-          masks.push({
-            raw: pred.segmentation,
-            confidence: pred.confidence || 1,
-            class: pred.class || 'object'
-          });
+        // SAM3 returns masks as an array of polygons, each polygon is [[x,y], ...]
+        if (pred.masks && Array.isArray(pred.masks)) {
+          for (const polygon of pred.masks) {
+            if (!Array.isArray(polygon) || polygon.length < 3) continue;
+            masks.push({
+              points: polygon.map(p => ({ x: p[0], y: p[1] })),
+              confidence: pred.confidence || 1,
+              class: pred.class || 'object'
+            });
+          }
         }
       }
     }
