@@ -666,6 +666,9 @@ canvas {
   pointer-events: auto;
   cursor: crosshair;
 }
+.overlay-canvas.brush-cursor {
+  cursor: none;
+}
 
 /* ===== Mask Target Badge ===== */
 .mask-target-info {
