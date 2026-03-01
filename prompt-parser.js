@@ -125,6 +125,17 @@ const PromptParser = (() => {
     'desaturate':    { type: 'saturation', params: { amount: { from: 0, to: -0.8 } } },
     'oversaturate':  { type: 'saturation', params: { amount: { from: 0, to: 0.6 } } },
 
+    // --- Glow ---
+    'glow':          { type: 'glow', params: { amount: { wave: 'sine', freq: 0.5, amp: 0.8, offset: 0.5 }, radius: 4 } },
+    'bloom':         { type: 'glow', params: { amount: { from: 0, to: 1.5 }, radius: 6 } },
+    'radiance':      { type: 'glow', params: { amount: { wave: 'sine', freq: 0.3, amp: 0.6, offset: 0.4 }, radius: 5 } },
+    'neon':          { type: 'glow', params: { amount: 1.2, radius: 3 } },
+
+    // --- Edge Detect ---
+    'edge':          { type: 'edgeDetect', params: { amount: { from: 0, to: 0.8 } } },
+    'outline':       { type: 'edgeDetect', params: { amount: 0.6 } },
+    'sketch':        { type: 'edgeDetect', params: { amount: { wave: 'sine', freq: 0.4, amp: 0.4, offset: 0.3 } } },
+
     // --- Post ---
     'vignette':      { type: 'vignette', params: { intensity: 0.5 } },
     'cinema':        { type: 'vignette', params: { intensity: 0.35 } },

@@ -1,7 +1,7 @@
 /**
  * Shifter WebGL Shader Engine
- * Per-pixel shader effects: displacement, ripple, chromatic aberration,
- * pixel stretching, liquify, wave distortion, RGB split, noise warp, etc.
+ * Per-pixel shader effects with mask-aware region targeting via SAM segmentation.
+ * Supports: full-image effects, masked region effects, and inverted mask effects.
  */
 
 // ===== Easing Functions =====
@@ -47,91 +47,67 @@ const VERT_SHADER = `
   }
 `;
 
-// Master fragment shader with all effects as uniform-controlled passes
+// Fragment shader with mask-aware blending
 const FRAG_SHADER = `
   precision highp float;
   varying vec2 v_uv;
   uniform sampler2D u_image;
-  uniform float u_time;        // 0-1 normalized progress
-  uniform float u_timeSeconds;  // actual seconds elapsed
+  uniform sampler2D u_mask;      // mask texture (r channel: 1=affected, 0=unaffected)
+  uniform float u_hasMask;       // 0 = no mask (apply everywhere), 1 = use mask
+  uniform float u_invertMask;    // 0 = normal, 1 = invert (apply to background)
+  uniform float u_maskFeather;   // feather edge softness
+  uniform float u_time;
+  uniform float u_timeSeconds;
   uniform vec2 u_resolution;
 
-  // === Displacement / Warp ===
-  uniform float u_displaceX;     // horizontal pixel shift amount
-  uniform float u_displaceY;     // vertical pixel shift amount
-  uniform float u_noiseWarp;     // noise-driven UV warp strength
-  uniform float u_noiseFreq;     // noise frequency
-  uniform float u_noiseSpeed;    // noise animation speed
-
-  // === Wave / Ripple ===
-  uniform float u_waveAmpX;      // horizontal wave amplitude
-  uniform float u_waveAmpY;      // vertical wave amplitude
-  uniform float u_waveFreqX;     // horizontal wave frequency
-  uniform float u_waveFreqY;     // vertical wave frequency
-  uniform float u_rippleAmp;     // radial ripple amplitude
-  uniform float u_rippleFreq;    // radial ripple frequency
-  uniform float u_rippleCenter;  // ripple center offset
-
-  // === Chromatic Aberration ===
-  uniform float u_chromaR;       // red channel offset
-  uniform float u_chromaG;       // green channel offset (usually 0)
-  uniform float u_chromaB;       // blue channel offset
-
-  // === Pixel Stretch ===
-  uniform float u_stretchX;      // horizontal stretch zone
-  uniform float u_stretchY;      // vertical stretch zone
-  uniform float u_stretchPos;    // stretch position (0-1)
-
-  // === Zoom / Scale ===
-  uniform float u_zoom;          // zoom amount (0 = none)
-  uniform vec2 u_zoomCenter;     // zoom focal point
-
-  // === Rotation ===
-  uniform float u_rotate;        // rotation in radians
-
-  // === RGB Split / Shift ===
-  uniform float u_rgbSplitAngle; // angle of RGB split
-  uniform float u_rgbSplitAmt;   // amount of RGB channel separation
-
-  // === Glitch ===
-  uniform float u_glitchIntensity; // block glitch strength
-  uniform float u_glitchSeed;      // randomization
-
-  // === Pixelate ===
-  uniform float u_pixelate;      // pixel block size (0 = off)
-
-  // === Blur ===
-  uniform float u_blur;          // directional blur amount
-  uniform float u_blurAngle;     // blur direction angle
-
-  // === Brightness / Color ===
+  // === Effect uniforms (same as before) ===
+  uniform float u_displaceX;
+  uniform float u_displaceY;
+  uniform float u_noiseWarp;
+  uniform float u_noiseFreq;
+  uniform float u_noiseSpeed;
+  uniform float u_waveAmpX;
+  uniform float u_waveAmpY;
+  uniform float u_waveFreqX;
+  uniform float u_waveFreqY;
+  uniform float u_rippleAmp;
+  uniform float u_rippleFreq;
+  uniform float u_rippleCenter;
+  uniform float u_chromaR;
+  uniform float u_chromaG;
+  uniform float u_chromaB;
+  uniform float u_stretchX;
+  uniform float u_stretchY;
+  uniform float u_stretchPos;
+  uniform float u_zoom;
+  uniform vec2 u_zoomCenter;
+  uniform float u_rotate;
+  uniform float u_rgbSplitAngle;
+  uniform float u_rgbSplitAmt;
+  uniform float u_glitchIntensity;
+  uniform float u_glitchSeed;
+  uniform float u_pixelate;
+  uniform float u_blur;
+  uniform float u_blurAngle;
   uniform float u_brightness;
   uniform float u_contrast;
   uniform float u_saturation;
   uniform float u_hueShift;
-
-  // === Vignette ===
   uniform float u_vignette;
-
-  // === Liquify ===
   uniform float u_liquifyAmt;
   uniform vec2 u_liquifyCenter;
   uniform float u_liquifyRadius;
-
-  // === Smear ===
   uniform float u_smearAmt;
   uniform float u_smearAngle;
-
-  // === Fracture ===
-  uniform float u_fracture;      // tile/fracture amount
+  uniform float u_fracture;
+  uniform float u_glow;
+  uniform float u_glowRadius;
+  uniform float u_edgeDetect;
 
   // ---- Helpers ----
-
-  // Hash for pseudo-random
   float hash(float n) { return fract(sin(n) * 43758.5453123); }
   float hash2(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 
-  // 2D noise
   float noise(vec2 p) {
     vec2 i = floor(p);
     vec2 f = fract(p);
@@ -143,7 +119,6 @@ const FRAG_SHADER = `
     return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
   }
 
-  // Fractional Brownian Motion
   float fbm(vec2 p) {
     float v = 0.0, a = 0.5;
     for (int i = 0; i < 5; i++) {
@@ -154,13 +129,11 @@ const FRAG_SHADER = `
     return v;
   }
 
-  // Rotation matrix
   vec2 rot(vec2 p, float angle) {
     float c = cos(angle), s = sin(angle);
     return vec2(c * p.x - s * p.y, s * p.x + c * p.y);
   }
 
-  // HSV conversion
   vec3 rgb2hsv(vec3 c) {
     vec4 K = vec4(0.0, -1.0/3.0, 2.0/3.0, -1.0);
     vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));
@@ -176,11 +149,11 @@ const FRAG_SHADER = `
     return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
   }
 
-  void main() {
-    vec2 uv = v_uv;
+  // Apply all distortion effects to UV and return the effected color
+  vec4 applyEffects(vec2 uv) {
     vec2 pixel = 1.0 / u_resolution;
 
-    // --- Fracture / Tile ---
+    // --- Fracture ---
     if (u_fracture > 0.0) {
       float tiles = floor(2.0 + u_fracture * 10.0);
       vec2 cell = floor(uv * tiles);
@@ -215,7 +188,7 @@ const FRAG_SHADER = `
     uv.x += u_displaceX * pixel.x;
     uv.y += u_displaceY * pixel.y;
 
-    // --- Wave Distortion ---
+    // --- Wave ---
     if (abs(u_waveAmpX) > 0.001 || abs(u_waveAmpY) > 0.001) {
       uv.x += sin(uv.y * u_waveFreqX + u_timeSeconds * 3.0) * u_waveAmpX * pixel.x;
       uv.y += sin(uv.x * u_waveFreqY + u_timeSeconds * 3.0) * u_waveAmpY * pixel.y;
@@ -239,8 +212,7 @@ const FRAG_SHADER = `
       if (dist < radius) {
         float strength = (1.0 - dist / radius);
         strength = strength * strength;
-        float angle = strength * u_liquifyAmt;
-        diff = rot(diff, angle);
+        diff = rot(diff, strength * u_liquifyAmt);
         uv = center + diff;
       }
     }
@@ -249,16 +221,12 @@ const FRAG_SHADER = `
     if (abs(u_stretchX) > 0.001) {
       float zone = u_stretchPos;
       float dist = abs(uv.x - zone);
-      if (dist < abs(u_stretchX) * 0.1) {
-        uv.x = zone;
-      }
+      if (dist < abs(u_stretchX) * 0.1) uv.x = zone;
     }
     if (abs(u_stretchY) > 0.001) {
       float zone = u_stretchPos;
       float dist = abs(uv.y - zone);
-      if (dist < abs(u_stretchY) * 0.1) {
-        uv.y = zone;
-      }
+      if (dist < abs(u_stretchY) * 0.1) uv.y = zone;
     }
 
     // --- Smear ---
@@ -273,8 +241,7 @@ const FRAG_SHADER = `
       float blockY = floor(uv.y * (10.0 + u_glitchIntensity * 20.0));
       float rnd = hash(blockY + floor(u_timeSeconds * 8.0) * 100.0 + u_glitchSeed);
       if (rnd > (1.0 - u_glitchIntensity * 0.3)) {
-        float shift = (hash(blockY * 77.0 + u_glitchSeed) - 0.5) * u_glitchIntensity * 0.2;
-        uv.x += shift;
+        uv.x += (hash(blockY * 77.0 + u_glitchSeed) - 0.5) * u_glitchIntensity * 0.2;
       }
     }
 
@@ -284,13 +251,12 @@ const FRAG_SHADER = `
       uv = floor(uv / blockSize) * blockSize + blockSize * 0.5;
     }
 
-    // --- Blur (directional) ---
+    // --- Blur ---
     vec4 color;
     if (u_blur > 0.5) {
       vec2 blurDir = vec2(cos(u_blurAngle), sin(u_blurAngle)) * pixel * u_blur;
       color = vec4(0.0);
       float total = 0.0;
-      const int SAMPLES = 12;
       for (int i = -6; i <= 6; i++) {
         float fi = float(i);
         float weight = 1.0 - abs(fi) / 7.0;
@@ -317,6 +283,33 @@ const FRAG_SHADER = `
       color.b = texture2D(u_image, uv - splitDir).b;
     }
 
+    // --- Glow ---
+    if (u_glow > 0.001) {
+      vec4 glowColor = vec4(0.0);
+      float glowTotal = 0.0;
+      float rad = u_glowRadius > 0.0 ? u_glowRadius : 4.0;
+      for (int i = -4; i <= 4; i++) {
+        for (int j = -4; j <= 4; j++) {
+          vec2 off = vec2(float(i), float(j)) * pixel * rad;
+          float w = 1.0 / (1.0 + float(i*i + j*j));
+          glowColor += texture2D(u_image, uv + off) * w;
+          glowTotal += w;
+        }
+      }
+      glowColor /= glowTotal;
+      color.rgb += glowColor.rgb * u_glow;
+    }
+
+    // --- Edge Detect ---
+    if (u_edgeDetect > 0.001) {
+      vec3 tl = texture2D(u_image, uv + vec2(-pixel.x, -pixel.y)).rgb;
+      vec3 tr = texture2D(u_image, uv + vec2( pixel.x, -pixel.y)).rgb;
+      vec3 bl = texture2D(u_image, uv + vec2(-pixel.x,  pixel.y)).rgb;
+      vec3 br = texture2D(u_image, uv + vec2( pixel.x,  pixel.y)).rgb;
+      vec3 edge = abs(tl - br) + abs(tr - bl);
+      color.rgb = mix(color.rgb, edge * 2.0, u_edgeDetect);
+    }
+
     // --- Brightness ---
     color.rgb += u_brightness;
 
@@ -340,13 +333,38 @@ const FRAG_SHADER = `
 
     // --- Vignette ---
     if (u_vignette > 0.001) {
-      float dist = distance(v_uv, vec2(0.5));
+      float dist = distance(uv, vec2(0.5));
       float vig = smoothstep(0.2, 0.85, dist);
       color.rgb *= 1.0 - vig * u_vignette;
     }
 
     color.a = 1.0;
-    gl_FragColor = color;
+    return color;
+  }
+
+  void main() {
+    // Original pixel (no effects)
+    vec4 original = texture2D(u_image, v_uv);
+    original.a = 1.0;
+
+    // Effected pixel
+    vec4 effected = applyEffects(v_uv);
+
+    // Mask blending
+    if (u_hasMask > 0.5) {
+      // Sample mask — v_uv y is flipped in our coord system
+      float maskVal = texture2D(u_mask, v_uv).r;
+
+      // Invert if needed
+      if (u_invertMask > 0.5) {
+        maskVal = 1.0 - maskVal;
+      }
+
+      // Blend: masked region gets effect, rest stays original
+      gl_FragColor = mix(original, effected, maskVal);
+    } else {
+      gl_FragColor = effected;
+    }
   }
 `;
 
@@ -362,6 +380,9 @@ class ShaderEngine {
 
     this.image = null;
     this.texture = null;
+    this.maskTexture = null;
+    this.hasMask = false;
+    this.invertMask = false;
     this.effect = null;
     this.easing = 'easeInOut';
     this.duration = 3;
@@ -379,7 +400,6 @@ class ShaderEngine {
   _initGL() {
     const gl = this.gl;
 
-    // Compile shaders
     const vs = this._compileShader(gl.VERTEX_SHADER, VERT_SHADER);
     const fs = this._compileShader(gl.FRAGMENT_SHADER, FRAG_SHADER);
 
@@ -413,13 +433,31 @@ class ShaderEngine {
     gl.enableVertexAttribArray(texLoc);
     gl.vertexAttribPointer(texLoc, 2, gl.FLOAT, false, 0, 0);
 
-    // Texture
+    // Image texture (unit 0)
     this.texture = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.texture);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+
+    // Mask texture (unit 1)
+    this.maskTexture = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.maskTexture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+
+    // Create a default white mask (all pixels affected)
+    const whitePx = new Uint8Array([255, 255, 255, 255]);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, whitePx);
+
+    // Set sampler uniforms
+    gl.uniform1i(gl.getUniformLocation(this.program, 'u_image'), 0);
+    gl.uniform1i(gl.getUniformLocation(this.program, 'u_mask'), 1);
   }
 
   _compileShader(type, source) {
@@ -455,7 +493,6 @@ class ShaderEngine {
     this.image = img;
     const gl = this.gl;
 
-    // Size canvas to image
     let w = img.naturalWidth || img.width;
     let h = img.naturalHeight || img.height;
     const maxDim = 1920;
@@ -467,13 +504,38 @@ class ShaderEngine {
 
     this.canvas.width = w;
     this.canvas.height = h;
+    this.imgWidth = w;
+    this.imgHeight = h;
     gl.viewport(0, 0, w, h);
 
-    // Upload texture
+    gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.texture);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
 
     this.drawFrame(0);
+  }
+
+  // Upload a mask canvas (white = effect applies, black = no effect)
+  setMask(maskCanvas) {
+    const gl = this.gl;
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.maskTexture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, maskCanvas);
+    this.hasMask = true;
+
+    if (this.image) this.drawFrame(this.currentTime);
+  }
+
+  clearMask() {
+    const gl = this.gl;
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.maskTexture);
+    const whitePx = new Uint8Array([255, 255, 255, 255]);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, whitePx);
+    this.hasMask = false;
+    this.invertMask = false;
+
+    if (this.image) this.drawFrame(this.currentTime);
   }
 
   setEffect(effect) {
@@ -481,18 +543,15 @@ class ShaderEngine {
     if (this.image) this.drawFrame(0);
   }
 
-  // Resolve a param value: number, keyframe {from,to}, or oscillator {wave,freq,amp,...}
   resolveParam(paramDef, progress) {
     if (typeof paramDef === 'number') return paramDef;
     if (!paramDef || typeof paramDef !== 'object') return 0;
 
-    // Keyframe
     if ('from' in paramDef && 'to' in paramDef) {
       const t = Easing[this.easing]?.(progress) ?? progress;
       return paramDef.from + (paramDef.to - paramDef.from) * t;
     }
 
-    // Oscillator
     if (paramDef.wave) {
       const freq = paramDef.freq || 1;
       const phase = paramDef.phase || 0;
@@ -514,12 +573,10 @@ class ShaderEngine {
         case 'square':
           return offset + amp * (Math.sin(2 * Math.PI * freq * tSec + phase) >= 0 ? 1 : -1);
         case 'noise': {
-          // Simple seeded noise approximation
           const seed = paramDef.seed || 0;
           const x = tSec * freq + seed;
           const n = Math.sin(x * 12.9898 + seed * 78.233) * 43758.5453;
           const v1 = (n - Math.floor(n)) * 2 - 1;
-          // Smooth it with neighbor averaging
           const x2 = x + 0.01;
           const n2 = Math.sin(x2 * 12.9898 + seed * 78.233) * 43758.5453;
           const v2 = (n2 - Math.floor(n2)) * 2 - 1;
@@ -539,12 +596,23 @@ class ShaderEngine {
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.useProgram(this.program);
 
-    // Time uniforms
+    // Bind textures
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.texture);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.maskTexture);
+
+    // Time / resolution
     this._setFloat('u_time', progress);
     this._setFloat('u_timeSeconds', progress * this.duration);
     this._setVec2('u_resolution', this.canvas.width, this.canvas.height);
 
-    // Reset all uniforms to 0
+    // Mask uniforms
+    this._setFloat('u_hasMask', this.hasMask ? 1 : 0);
+    this._setFloat('u_invertMask', this.invertMask ? 1 : 0);
+    this._setFloat('u_maskFeather', 0);
+
+    // Reset all effect uniforms
     const uniformNames = [
       'u_displaceX', 'u_displaceY', 'u_noiseWarp', 'u_noiseFreq', 'u_noiseSpeed',
       'u_waveAmpX', 'u_waveAmpY', 'u_waveFreqX', 'u_waveFreqY',
@@ -557,7 +625,8 @@ class ShaderEngine {
       'u_pixelate', 'u_blur', 'u_blurAngle',
       'u_brightness', 'u_contrast', 'u_saturation', 'u_hueShift',
       'u_vignette', 'u_liquifyAmt', 'u_liquifyRadius',
-      'u_smearAmt', 'u_smearAngle', 'u_fracture'
+      'u_smearAmt', 'u_smearAngle', 'u_fracture',
+      'u_glow', 'u_glowRadius', 'u_edgeDetect'
     ];
     for (const name of uniformNames) this._setFloat(name, 0);
     this._setVec2('u_zoomCenter', 0.5, 0.5);
@@ -648,11 +717,17 @@ class ShaderEngine {
           case 'fracture':
             this._setFloat('u_fracture', p('amount'));
             break;
+          case 'glow':
+            this._setFloat('u_glow', p('amount'));
+            this._setFloat('u_glowRadius', p('radius') || 4);
+            break;
+          case 'edgeDetect':
+            this._setFloat('u_edgeDetect', p('amount'));
+            break;
         }
       }
     }
 
-    // Draw
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 
