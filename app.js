@@ -269,7 +269,6 @@
 
       // Enable SAM buttons
       updateSamButtons();
-      SAM.clearCache();
 
       // Clear any existing mask
       clearMask();

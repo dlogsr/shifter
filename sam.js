@@ -7,8 +7,6 @@
 const SAM = (() => {
   const API_BASE = 'https://serverless.roboflow.com';
   let apiKey = localStorage.getItem('shifter_roboflow_key') || '';
-  let cachedImageId = null;
-  let cachedImageData = null;
 
   function setApiKey(key) {
     apiKey = key.trim();
@@ -29,42 +27,11 @@ const SAM = (() => {
     return dataUrl.split(',')[1];
   }
 
-  // Step 1: Embed image for point-based segmentation
-  async function embedImage(canvas) {
+  // Segment by clicking a point (sends image inline — no embed step needed)
+  async function segmentByPoint(canvas, points) {
     if (!hasApiKey()) throw new Error('Roboflow API key required');
 
     const base64 = canvasToBase64(canvas);
-    const imageId = 'shifter_' + Date.now();
-
-    const resp = await fetch(`${API_BASE}/sam3/embed_image?api_key=${encodeURIComponent(apiKey)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        image: { type: 'base64', value: base64 },
-        image_id: imageId
-      })
-    });
-
-    if (!resp.ok) {
-      const err = await resp.text();
-      throw new Error(`Embed failed (${resp.status}): ${err}`);
-    }
-
-    cachedImageId = imageId;
-    cachedImageData = base64;
-    return imageId;
-  }
-
-  // Step 2: Segment by clicking a point
-  async function segmentByPoint(canvas, points, imageId) {
-    if (!hasApiKey()) throw new Error('Roboflow API key required');
-
-    const id = imageId || cachedImageId;
-
-    // If no cached embedding, embed first
-    if (!id) {
-      await embedImage(canvas);
-    }
 
     const prompts = points.map(pt => ({
       points: [{ x: pt.x, y: pt.y, positive: pt.positive !== false }]
@@ -74,7 +41,7 @@ const SAM = (() => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        image_id: cachedImageId,
+        image: { type: 'base64', value: base64 },
         prompts: prompts,
         format: 'polygon'
       })
@@ -251,22 +218,15 @@ const SAM = (() => {
     return overlayCanvas;
   }
 
-  function clearCache() {
-    cachedImageId = null;
-    cachedImageData = null;
-  }
-
   return {
     setApiKey,
     getApiKey,
     hasApiKey,
-    embedImage,
     segmentByPoint,
     segmentByText,
     renderMaskToCanvas,
     featherMask,
     invertMask,
-    renderOverlay,
-    clearCache
+    renderOverlay
   };
 })();
