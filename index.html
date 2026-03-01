@@ -33,20 +33,97 @@
 
     <!-- Main Layout -->
     <main class="main">
-      <!-- Left Panel: Presets -->
+      <!-- Left Panel -->
       <aside class="panel panel-left">
-        <h2 class="panel-title">Presets</h2>
-        <div id="preset-list" class="preset-list"></div>
-
-        <div class="prompt-section">
-          <h2 class="panel-title">Describe Motion</h2>
-          <textarea id="prompt-input" placeholder="e.g. slow zoom in with gentle horizontal drift and subtle jitter..." rows="3"></textarea>
-          <button id="btn-generate" class="btn btn-accent">Generate Effect</button>
+        <!-- Tabs: Presets / Segment -->
+        <div class="panel-tabs">
+          <button class="panel-tab active" data-tab="presets">Presets</button>
+          <button class="panel-tab" data-tab="segment">Segment</button>
         </div>
 
-        <div id="params-section" class="params-section" style="display:none;">
-          <h2 class="panel-title">Parameters</h2>
-          <div id="params-controls"></div>
+        <!-- Presets Tab -->
+        <div id="tab-presets" class="tab-content active">
+          <div id="preset-list" class="preset-list"></div>
+
+          <div class="prompt-section">
+            <h2 class="panel-title">Describe Motion</h2>
+            <textarea id="prompt-input" placeholder="e.g. slow liquid warp with chromatic aberration and glow..." rows="3"></textarea>
+            <button id="btn-generate" class="btn btn-accent">Generate Effect</button>
+          </div>
+
+          <div id="params-section" class="params-section" style="display:none;">
+            <h2 class="panel-title">Parameters</h2>
+            <div id="params-controls"></div>
+          </div>
+        </div>
+
+        <!-- Segment Tab -->
+        <div id="tab-segment" class="tab-content">
+          <!-- API Key -->
+          <div class="segment-section">
+            <h2 class="panel-title">Roboflow API Key</h2>
+            <div class="api-key-row">
+              <input type="password" id="api-key-input" placeholder="Enter Roboflow API key" class="text-input">
+              <button id="btn-save-key" class="btn btn-sm">Save</button>
+            </div>
+            <span class="hint" id="api-key-status"></span>
+          </div>
+
+          <!-- Selection Mode -->
+          <div class="segment-section">
+            <h2 class="panel-title">Select Region</h2>
+            <div class="segment-modes">
+              <button id="btn-click-mode" class="btn btn-sm seg-mode-btn" disabled>
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="3" stroke="currentColor" stroke-width="1.5"/><path d="M7 1v2M7 11v2M1 7h2M11 7h2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                Click to Select
+              </button>
+              <button id="btn-text-mode" class="btn btn-sm seg-mode-btn" disabled>
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 4h10M2 7h7M2 10h5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                Describe Object
+              </button>
+            </div>
+          </div>
+
+          <!-- Text Describe Input -->
+          <div id="text-segment-section" class="segment-section" style="display:none;">
+            <h2 class="panel-title">Describe what to select</h2>
+            <div class="api-key-row">
+              <input type="text" id="text-segment-input" placeholder="e.g. the car, person, sky..." class="text-input">
+              <button id="btn-text-segment" class="btn btn-sm btn-primary">Find</button>
+            </div>
+          </div>
+
+          <!-- Click Points List -->
+          <div id="click-points-section" class="segment-section" style="display:none;">
+            <h2 class="panel-title">Click Points</h2>
+            <p class="hint">Click on the image to add positive points. Right-click to add negative points (exclude).</p>
+            <div id="click-points-list" class="click-points-list"></div>
+            <div class="btn-group" style="margin-top:8px;">
+              <button id="btn-segment-run" class="btn btn-sm btn-primary" disabled>Segment</button>
+              <button id="btn-clear-points" class="btn btn-sm">Clear Points</button>
+            </div>
+          </div>
+
+          <!-- Mask Controls -->
+          <div id="mask-controls" class="segment-section" style="display:none;">
+            <h2 class="panel-title">Mask</h2>
+            <div class="mask-info" id="mask-info"></div>
+            <div class="mask-options">
+              <label class="checkbox-label">
+                <input type="checkbox" id="mask-invert"> Invert (apply to background)
+              </label>
+              <label class="checkbox-label">
+                <input type="checkbox" id="mask-feather" checked> Feather edges
+              </label>
+            </div>
+            <div class="btn-group" style="margin-top:8px;">
+              <button id="btn-clear-mask" class="btn btn-sm">Clear Mask</button>
+              <button id="btn-add-mask" class="btn btn-sm">Add Region</button>
+            </div>
+          </div>
+
+          <!-- Status -->
+          <div id="segment-status" class="segment-status"></div>
         </div>
       </aside>
 
@@ -54,6 +131,8 @@
       <section class="preview-area">
         <div class="canvas-wrapper" id="canvas-wrapper">
           <canvas id="canvas"></canvas>
+          <!-- Overlay canvas for mask visualization & click points -->
+          <canvas id="overlay-canvas" class="overlay-canvas"></canvas>
           <div id="upload-overlay" class="upload-overlay">
             <div class="upload-content">
               <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
@@ -69,11 +148,11 @@
 
         <!-- Playback Controls -->
         <div class="playback-controls">
-          <button id="btn-play" class="btn-icon" disabled title="Play/Pause">
+          <button id="btn-play" class="btn-icon" disabled>
             <svg id="icon-play" width="20" height="20" viewBox="0 0 20 20" fill="none"><polygon points="5,3 17,10 5,17" fill="currentColor"/></svg>
             <svg id="icon-pause" width="20" height="20" viewBox="0 0 20 20" fill="none" style="display:none"><rect x="4" y="3" width="4" height="14" rx="1" fill="currentColor"/><rect x="12" y="3" width="4" height="14" rx="1" fill="currentColor"/></svg>
           </button>
-          <button id="btn-stop" class="btn-icon" disabled title="Stop">
+          <button id="btn-stop" class="btn-icon" disabled>
             <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="4" y="4" width="12" height="12" rx="2" fill="currentColor"/></svg>
           </button>
           <div class="timeline-bar">
@@ -83,17 +162,17 @@
             </div>
           </div>
           <span id="time-display" class="time-display">0:00 / 0:00</span>
-          <button id="btn-loop" class="btn-icon active" title="Loop">
+          <button id="btn-loop" class="btn-icon active">
             <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M4 10a6 6 0 0112 0M16 10a6 6 0 01-12 0" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M14 7l2 3 2-3M6 13l-2-3-2 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </button>
         </div>
       </section>
 
-      <!-- Right Panel: Layer Info -->
+      <!-- Right Panel -->
       <aside class="panel panel-right">
         <h2 class="panel-title">Effect Stack</h2>
         <div id="effect-stack" class="effect-stack">
-          <p class="empty-state">Select a preset or generate an effect to begin.</p>
+          <p class="empty-state">Select a preset or describe a motion effect.</p>
         </div>
         <div id="easing-section" style="display:none;">
           <h2 class="panel-title">Easing</h2>
@@ -107,6 +186,15 @@
             <option value="bounce">Bounce</option>
           </select>
         </div>
+
+        <!-- Mask Target Indicator -->
+        <div id="mask-target-info" class="mask-target-info" style="display:none;">
+          <h2 class="panel-title">Target Region</h2>
+          <div class="mask-badge" id="mask-badge">
+            <span class="mask-badge-dot"></span>
+            <span id="mask-badge-text">Full Image</span>
+          </div>
+        </div>
       </aside>
     </main>
   </div>
@@ -118,16 +206,10 @@
       <div class="export-options">
         <label>Format</label>
         <div class="btn-group">
-          <button class="btn btn-sm active" data-format="gif">GIF</button>
-          <button class="btn btn-sm" data-format="webm">WebM</button>
-          <button class="btn btn-sm" data-format="frames">Frames (ZIP)</button>
+          <button class="btn btn-sm" data-format="gif">GIF</button>
+          <button class="btn btn-sm active" data-format="webm">WebM</button>
+          <button class="btn btn-sm" data-format="frames">Frames</button>
         </div>
-        <label>Resolution</label>
-        <select id="export-resolution" class="select-input">
-          <option value="1">Original</option>
-          <option value="0.5">Half</option>
-          <option value="2">2x</option>
-        </select>
         <label>FPS</label>
         <select id="export-fps" class="select-input">
           <option value="24">24</option>
@@ -149,6 +231,7 @@
   <script src="engine.js"></script>
   <script src="presets.js"></script>
   <script src="prompt-parser.js"></script>
+  <script src="sam.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

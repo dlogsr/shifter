@@ -1,6 +1,7 @@
 /**
  * Shifter App Controller
- * Wires UI to WebGL ShaderEngine: image upload, presets, prompt, playback, export.
+ * Wires UI to ShaderEngine + SAM segmentation: image upload, presets,
+ * prompt, playback, export, click-to-segment, text-describe, mask controls.
  */
 
 (function () {
@@ -8,6 +9,7 @@
 
   // ===== DOM =====
   const canvas = document.getElementById('canvas');
+  const overlayCanvas = document.getElementById('overlay-canvas');
   const canvasWrapper = document.getElementById('canvas-wrapper');
   const uploadOverlay = document.getElementById('upload-overlay');
   const fileInput = document.getElementById('file-input');
@@ -38,12 +40,56 @@
   const progressText = document.getElementById('progress-text');
   const exportProgress = document.getElementById('export-progress');
 
+  // SAM DOM
+  const apiKeyInput = document.getElementById('api-key-input');
+  const btnSaveKey = document.getElementById('btn-save-key');
+  const apiKeyStatus = document.getElementById('api-key-status');
+  const btnClickMode = document.getElementById('btn-click-mode');
+  const btnTextMode = document.getElementById('btn-text-mode');
+  const textSegmentSection = document.getElementById('text-segment-section');
+  const textSegmentInput = document.getElementById('text-segment-input');
+  const btnTextSegment = document.getElementById('btn-text-segment');
+  const clickPointsSection = document.getElementById('click-points-section');
+  const clickPointsList = document.getElementById('click-points-list');
+  const btnSegmentRun = document.getElementById('btn-segment-run');
+  const btnClearPoints = document.getElementById('btn-clear-points');
+  const maskControls = document.getElementById('mask-controls');
+  const maskInfo = document.getElementById('mask-info');
+  const maskInvert = document.getElementById('mask-invert');
+  const maskFeather = document.getElementById('mask-feather');
+  const btnClearMask = document.getElementById('btn-clear-mask');
+  const btnAddMask = document.getElementById('btn-add-mask');
+  const segmentStatus = document.getElementById('segment-status');
+  const maskTargetInfo = document.getElementById('mask-target-info');
+  const maskBadge = document.getElementById('mask-badge');
+  const maskBadgeText = document.getElementById('mask-badge-text');
+
   // ===== Engine =====
   const engine = new ShaderEngine(canvas);
 
   let currentPresetId = null;
   let currentEffect = null;
   let imageLoaded = false;
+  let sourceImage = null; // original <img> for SAM
+
+  // Segmentation state
+  let segMode = null; // 'click' | 'text' | null
+  let clickPoints = [];
+  let currentMasks = null;
+  let currentMaskCanvas = null;
+
+  // ===== Panel Tabs =====
+  document.querySelectorAll('.panel-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.panel-tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      tab.classList.add('active');
+      document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+
+      // Exit seg mode if switching away
+      if (tab.dataset.tab !== 'segment') exitSegMode();
+    });
+  });
 
   // ===== Presets =====
   function renderPresets() {
@@ -83,8 +129,6 @@
     }
 
     applyEffect();
-
-    // Auto-play on preset select if image is loaded
     if (imageLoaded && !engine.playing) {
       engine.play();
       setPlayingUI(true);
@@ -93,20 +137,21 @@
 
   function applyEffect() {
     if (!currentEffect) return;
-
     engine.setEffect(currentEffect);
     updateEffectStack();
     updateParams();
+    updateMaskBadge();
 
     if (imageLoaded) {
       btnPlay.disabled = false;
       btnStop.disabled = false;
       btnExport.disabled = false;
       easingSection.style.display = '';
+      maskTargetInfo.style.display = '';
     }
   }
 
-  // ===== Effect Stack Display =====
+  // ===== Effect Stack =====
   const LAYER_COLORS = {
     displace: '#6366f1', noiseWarp: '#8b5cf6', wave: '#06b6d4',
     ripple: '#3b82f6', chromatic: '#ec4899', rgbSplit: '#f43f5e',
@@ -114,7 +159,7 @@
     zoom: '#10b981', rotate: '#a78bfa', blur: '#64748b',
     brightness: '#fbbf24', contrast: '#f97316', saturation: '#10b981',
     hueShift: '#a78bfa', vignette: '#334155', liquify: '#8b5cf6',
-    smear: '#ec4899', fracture: '#ef4444'
+    smear: '#ec4899', fracture: '#ef4444', glow: '#fbbf24', edgeDetect: '#06b6d4'
   };
 
   function updateEffectStack() {
@@ -122,17 +167,15 @@
       effectStack.innerHTML = '<p class="empty-state">Select a preset or describe a motion effect.</p>';
       return;
     }
-
     effectStack.innerHTML = '';
     currentEffect.layers.forEach(layer => {
       const el = document.createElement('div');
       el.className = 'effect-layer';
       const color = LAYER_COLORS[layer.type] || '#6366f1';
-      const summary = getLayerSummary(layer);
       el.innerHTML = `
         <div class="effect-dot" style="background:${color}"></div>
         <span class="effect-layer-name">${layer.type}</span>
-        <span class="effect-layer-value">${summary}</span>
+        <span class="effect-layer-value">${getLayerSummary(layer)}</span>
       `;
       effectStack.appendChild(el);
     });
@@ -141,98 +184,72 @@
   function getLayerSummary(layer) {
     const parts = [];
     for (const [key, val] of Object.entries(layer.params || {})) {
-      if (typeof val === 'number') {
-        parts.push(`${key}: ${formatNum(val)}`);
-      } else if (val && typeof val === 'object') {
+      if (typeof val === 'number') parts.push(`${key}: ${fmtNum(val)}`);
+      else if (val && typeof val === 'object') {
         if (val.wave) parts.push(`${key}: ${val.wave}`);
-        else if ('from' in val) parts.push(`${key}: ${formatNum(val.from)}→${formatNum(val.to)}`);
+        else if ('from' in val) parts.push(`${key}: ${fmtNum(val.from)}->${fmtNum(val.to)}`);
       }
     }
     return parts.join(', ') || '—';
   }
 
-  function formatNum(n) {
+  function fmtNum(n) {
     if (Math.abs(n) >= 10) return n.toFixed(0);
     if (Math.abs(n) >= 1) return n.toFixed(1);
     return n.toFixed(3);
   }
 
-  // ===== Parameter Controls =====
+  // ===== Parameters =====
   function updateParams() {
     if (!currentEffect || !currentEffect.layers.length) {
       paramsSection.style.display = 'none';
       return;
     }
-
     paramsSection.style.display = '';
     paramsControls.innerHTML = '';
 
-    currentEffect.layers.forEach((layer, li) => {
+    currentEffect.layers.forEach(layer => {
       for (const [key, val] of Object.entries(layer.params || {})) {
         if (typeof val === 'number') {
           const absMax = Math.max(Math.abs(val) * 3, 1);
-          addParamSlider(layer, key, val, -absMax, absMax, (v) => {
-            layer.params[key] = v;
-            applyLiveUpdate();
-          });
+          addSlider(layer, key, val, -absMax, absMax, v => { layer.params[key] = v; liveUpdate(); });
         } else if (val && typeof val === 'object') {
           if ('amp' in val) {
-            const maxAmp = Math.max(Math.abs(val.amp) * 3, 0.5);
-            addParamSlider(layer, `${key} amp`, val.amp, 0, maxAmp, (v) => {
-              val.amp = v;
-              applyLiveUpdate();
-            });
+            const m = Math.max(Math.abs(val.amp) * 3, 0.5);
+            addSlider(layer, `${key} amp`, val.amp, 0, m, v => { val.amp = v; liveUpdate(); });
           }
           if ('freq' in val) {
-            const maxFreq = Math.max(val.freq * 3, 2);
-            addParamSlider(layer, `${key} freq`, val.freq, 0.1, maxFreq, (v) => {
-              val.freq = v;
-              applyLiveUpdate();
-            });
+            const m = Math.max(val.freq * 3, 2);
+            addSlider(layer, `${key} freq`, val.freq, 0.1, m, v => { val.freq = v; liveUpdate(); });
           }
           if ('from' in val && 'to' in val) {
             const range = val.to - val.from;
-            const absMax = Math.max(Math.abs(range) * 2, 1);
-            addParamSlider(layer, `${key} range`, range, -absMax, absMax, (v) => {
-              val.to = val.from + v;
-              applyLiveUpdate();
-            });
+            const m = Math.max(Math.abs(range) * 2, 1);
+            addSlider(layer, `${key} range`, range, -m, m, v => { val.to = val.from + v; liveUpdate(); });
           }
         }
       }
     });
   }
 
-  function addParamSlider(layer, label, value, min, max, onChange) {
+  function addSlider(layer, label, value, min, max, onChange) {
     const row = document.createElement('div');
     row.className = 'param-row';
     const step = (max - min) > 10 ? 0.5 : 0.001;
     row.innerHTML = `
-      <div class="param-label">
-        <span>${layer.type} · ${label}</span>
-        <span class="param-value">${formatNum(value)}</span>
-      </div>
+      <div class="param-label"><span>${layer.type} · ${label}</span><span class="param-value">${fmtNum(value)}</span></div>
       <input type="range" min="${min}" max="${max}" step="${step}" value="${value}">
     `;
-
     const input = row.querySelector('input');
-    const valDisplay = row.querySelector('.param-value');
-
-    input.addEventListener('input', () => {
-      const v = parseFloat(input.value);
-      valDisplay.textContent = formatNum(v);
-      if (onChange) onChange(v);
-    });
-
+    const disp = row.querySelector('.param-value');
+    input.addEventListener('input', () => { const v = parseFloat(input.value); disp.textContent = fmtNum(v); onChange(v); });
     paramsControls.appendChild(row);
   }
 
-  function applyLiveUpdate() {
+  function liveUpdate() {
     engine.setEffect(currentEffect);
     updateEffectStack();
-    if (!engine.playing) {
-      engine.drawFrame(engine.currentTime);
-    }
+    if (!engine.playing) engine.drawFrame(engine.currentTime);
   }
 
   // ===== Image Upload =====
@@ -242,98 +259,66 @@
     const img = new Image();
     img.onload = () => {
       imageLoaded = true;
+      sourceImage = img;
       uploadOverlay.style.display = 'none';
       engine.setImage(img);
+
+      // Size overlay canvas to match
+      overlayCanvas.width = engine.imgWidth || canvas.width;
+      overlayCanvas.height = engine.imgHeight || canvas.height;
+
+      // Enable SAM buttons
+      updateSamButtons();
+      SAM.clearCache();
+
+      // Clear any existing mask
+      clearMask();
 
       if (currentEffect) {
         btnPlay.disabled = false;
         btnStop.disabled = false;
         btnExport.disabled = false;
         easingSection.style.display = '';
+        maskTargetInfo.style.display = '';
       }
     };
     img.src = URL.createObjectURL(file);
   }
 
   uploadOverlay.addEventListener('click', () => fileInput.click());
-  fileInput.addEventListener('change', (e) => {
-    if (e.target.files[0]) handleFile(e.target.files[0]);
-  });
+  fileInput.addEventListener('change', (e) => { if (e.target.files[0]) handleFile(e.target.files[0]); });
 
-  // Drag & Drop
   ['dragover', 'dragenter'].forEach(evt => {
-    uploadOverlay.addEventListener(evt, (e) => {
-      e.preventDefault();
-      uploadOverlay.classList.add('drag-over');
-    });
-    canvasWrapper.addEventListener(evt, (e) => e.preventDefault());
+    uploadOverlay.addEventListener(evt, e => { e.preventDefault(); uploadOverlay.classList.add('drag-over'); });
+    canvasWrapper.addEventListener(evt, e => e.preventDefault());
   });
-
   uploadOverlay.addEventListener('dragleave', () => uploadOverlay.classList.remove('drag-over'));
-
-  uploadOverlay.addEventListener('drop', (e) => {
-    e.preventDefault();
-    uploadOverlay.classList.remove('drag-over');
-    if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
-  });
-
-  canvasWrapper.addEventListener('drop', (e) => {
-    e.preventDefault();
-    if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
-  });
+  uploadOverlay.addEventListener('drop', e => { e.preventDefault(); uploadOverlay.classList.remove('drag-over'); if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); });
+  canvasWrapper.addEventListener('drop', e => { e.preventDefault(); if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); });
 
   // ===== Prompt =====
   btnGenerate.addEventListener('click', generateFromPrompt);
-  promptInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      generateFromPrompt();
-    }
-  });
+  promptInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); generateFromPrompt(); } });
 
   function generateFromPrompt() {
     const text = promptInput.value.trim();
     if (!text) return;
-
     const effect = PromptParser.parse(text);
     currentPresetId = null;
     currentEffect = effect;
-
     document.querySelectorAll('.preset-item').forEach(el => el.classList.remove('active'));
-
-    if (effect.defaultEasing) {
-      easingSelect.value = effect.defaultEasing;
-      engine.easing = effect.defaultEasing;
-    }
-
+    if (effect.defaultEasing) { easingSelect.value = effect.defaultEasing; engine.easing = effect.defaultEasing; }
     applyEffect();
-
-    if (imageLoaded && !engine.playing) {
-      engine.play();
-      setPlayingUI(true);
-    }
+    if (imageLoaded && !engine.playing) { engine.play(); setPlayingUI(true); }
   }
 
   // ===== Playback =====
   btnPlay.addEventListener('click', () => {
-    if (engine.playing) {
-      engine.pause();
-      setPlayingUI(false);
-    } else {
-      engine.play();
-      setPlayingUI(true);
-    }
+    if (engine.playing) { engine.pause(); setPlayingUI(false); }
+    else { engine.play(); setPlayingUI(true); }
   });
-
-  btnStop.addEventListener('click', () => {
-    engine.stop();
-    setPlayingUI(false);
-  });
-
-  btnLoop.addEventListener('click', () => {
-    engine.looping = !engine.looping;
-    btnLoop.classList.toggle('active', engine.looping);
-  });
+  btnStop.addEventListener('click', () => { engine.stop(); setPlayingUI(false); });
+  btnLoop.addEventListener('click', () => { engine.looping = !engine.looping; btnLoop.classList.toggle('active', engine.looping); });
 
   function setPlayingUI(playing) {
     iconPlay.style.display = playing ? 'none' : '';
@@ -355,41 +340,330 @@
     return `${m}:${String(sec).padStart(2, '0')}.${ms}`;
   }
 
-  // Timeline scrubbing
   let scrubbing = false;
-  timelineTrack.addEventListener('mousedown', (e) => { scrubbing = true; scrubTo(e); });
-  document.addEventListener('mousemove', (e) => { if (scrubbing) scrubTo(e); });
+  timelineTrack.addEventListener('mousedown', e => { scrubbing = true; scrubTo(e); });
+  document.addEventListener('mousemove', e => { if (scrubbing) scrubTo(e); });
   document.addEventListener('mouseup', () => { scrubbing = false; });
-
   function scrubTo(e) {
     const rect = timelineTrack.getBoundingClientRect();
-    const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    engine.seekTo(pct);
+    engine.seekTo(Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)));
   }
 
-  // Duration
   durationSlider.addEventListener('input', () => {
     const val = parseFloat(durationSlider.value);
     engine.duration = val;
     durationLabel.textContent = val.toFixed(1) + 's';
   });
 
-  // Easing
   easingSelect.addEventListener('change', () => {
     engine.easing = easingSelect.value;
     if (!engine.playing && imageLoaded) engine.drawFrame(engine.currentTime);
   });
 
+  // ========================================
+  // ===== SAM SEGMENTATION =====
+  // ========================================
+
+  // API Key
+  if (SAM.hasApiKey()) {
+    apiKeyInput.value = SAM.getApiKey();
+    apiKeyStatus.textContent = 'Key saved';
+    apiKeyStatus.className = 'hint success';
+  }
+
+  btnSaveKey.addEventListener('click', () => {
+    const key = apiKeyInput.value.trim();
+    if (!key) { apiKeyStatus.textContent = 'Please enter a key'; apiKeyStatus.className = 'hint error'; return; }
+    SAM.setApiKey(key);
+    apiKeyStatus.textContent = 'Key saved';
+    apiKeyStatus.className = 'hint success';
+    updateSamButtons();
+  });
+
+  function updateSamButtons() {
+    const ready = SAM.hasApiKey() && imageLoaded;
+    btnClickMode.disabled = !ready;
+    btnTextMode.disabled = !ready;
+  }
+
+  // Mode switching
+  btnClickMode.addEventListener('click', () => {
+    if (segMode === 'click') { exitSegMode(); return; }
+    enterClickMode();
+  });
+
+  btnTextMode.addEventListener('click', () => {
+    if (segMode === 'text') { exitSegMode(); return; }
+    enterTextMode();
+  });
+
+  function enterClickMode() {
+    exitSegMode();
+    segMode = 'click';
+    btnClickMode.classList.add('active');
+    clickPointsSection.style.display = '';
+    overlayCanvas.classList.add('interactive');
+
+    // Pause playback during selection
+    if (engine.playing) { engine.pause(); setPlayingUI(false); }
+    engine.drawFrame(engine.currentTime);
+  }
+
+  function enterTextMode() {
+    exitSegMode();
+    segMode = 'text';
+    btnTextMode.classList.add('active');
+    textSegmentSection.style.display = '';
+    textSegmentInput.focus();
+  }
+
+  function exitSegMode() {
+    segMode = null;
+    btnClickMode.classList.remove('active');
+    btnTextMode.classList.remove('active');
+    clickPointsSection.style.display = 'none';
+    textSegmentSection.style.display = 'none';
+    overlayCanvas.classList.remove('interactive');
+    clearOverlay();
+  }
+
+  // ===== Click-to-Segment =====
+  overlayCanvas.addEventListener('click', (e) => {
+    if (segMode !== 'click') return;
+    const rect = overlayCanvas.getBoundingClientRect();
+    const scaleX = overlayCanvas.width / rect.width;
+    const scaleY = overlayCanvas.height / rect.height;
+    const x = Math.round((e.clientX - rect.left) * scaleX);
+    const y = Math.round((e.clientY - rect.top) * scaleY);
+    clickPoints.push({ x, y, positive: true });
+    renderClickPoints();
+  });
+
+  overlayCanvas.addEventListener('contextmenu', (e) => {
+    if (segMode !== 'click') return;
+    e.preventDefault();
+    const rect = overlayCanvas.getBoundingClientRect();
+    const scaleX = overlayCanvas.width / rect.width;
+    const scaleY = overlayCanvas.height / rect.height;
+    const x = Math.round((e.clientX - rect.left) * scaleX);
+    const y = Math.round((e.clientY - rect.top) * scaleY);
+    clickPoints.push({ x, y, positive: false });
+    renderClickPoints();
+  });
+
+  function renderClickPoints() {
+    const ctx = overlayCanvas.getContext('2d');
+    clearOverlay();
+
+    // Draw existing mask overlay if any
+    if (currentMasks && currentMaskCanvas) {
+      ctx.globalAlpha = 0.3;
+      ctx.drawImage(currentMaskCanvas, 0, 0);
+      ctx.globalAlpha = 1;
+    }
+
+    // Draw click points
+    clickPoints.forEach(pt => {
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, 6, 0, Math.PI * 2);
+      ctx.fillStyle = pt.positive ? 'rgba(52,211,153,0.9)' : 'rgba(248,113,113,0.9)';
+      ctx.fill();
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Crosshair
+      ctx.beginPath();
+      ctx.moveTo(pt.x - 10, pt.y); ctx.lineTo(pt.x + 10, pt.y);
+      ctx.moveTo(pt.x, pt.y - 10); ctx.lineTo(pt.x, pt.y + 10);
+      ctx.strokeStyle = pt.positive ? 'rgba(52,211,153,0.5)' : 'rgba(248,113,113,0.5)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    });
+
+    // Update list
+    clickPointsList.innerHTML = '';
+    clickPoints.forEach((pt, i) => {
+      const el = document.createElement('div');
+      el.className = 'click-point';
+      el.innerHTML = `<div class="dot ${pt.positive ? 'positive' : 'negative'}"></div><span>(${pt.x}, ${pt.y})</span>`;
+      clickPointsList.appendChild(el);
+    });
+
+    btnSegmentRun.disabled = clickPoints.length === 0;
+  }
+
+  btnClearPoints.addEventListener('click', () => {
+    clickPoints = [];
+    renderClickPoints();
+  });
+
+  btnSegmentRun.addEventListener('click', async () => {
+    if (clickPoints.length === 0) return;
+    await runClickSegmentation();
+  });
+
+  async function runClickSegmentation() {
+    showSegStatus('loading', 'Segmenting image...');
+    try {
+      // Need a clean canvas without effects for the API
+      const cleanCanvas = getCleanCanvas();
+      const masks = await SAM.segmentByPoint(cleanCanvas, clickPoints);
+      if (masks.length === 0) {
+        showSegStatus('error', 'No objects found. Try different points.');
+        return;
+      }
+      applyMasks(masks);
+      showSegStatus('success', `Found ${masks.length} region(s)`);
+    } catch (err) {
+      showSegStatus('error', err.message);
+    }
+  }
+
+  // ===== Text-Describe Segment =====
+  btnTextSegment.addEventListener('click', runTextSegmentation);
+  textSegmentInput.addEventListener('keydown', e => { if (e.key === 'Enter') runTextSegmentation(); });
+
+  async function runTextSegmentation() {
+    const text = textSegmentInput.value.trim();
+    if (!text) return;
+    showSegStatus('loading', `Looking for "${text}"...`);
+    try {
+      const cleanCanvas = getCleanCanvas();
+      const masks = await SAM.segmentByText(cleanCanvas, text);
+      if (masks.length === 0) {
+        showSegStatus('error', `Could not find "${text}". Try a different description.`);
+        return;
+      }
+      applyMasks(masks);
+      showSegStatus('success', `Found ${masks.length} region(s) for "${text}"`);
+    } catch (err) {
+      showSegStatus('error', err.message);
+    }
+  }
+
+  // ===== Mask Application =====
+  function applyMasks(masks) {
+    currentMasks = masks;
+    const w = engine.imgWidth || canvas.width;
+    const h = engine.imgHeight || canvas.height;
+
+    // Render polygon mask to canvas
+    let maskCanvas = SAM.renderMaskToCanvas(masks, w, h);
+
+    // Feather if checked
+    if (maskFeather.checked) {
+      maskCanvas = SAM.featherMask(maskCanvas, 6);
+    }
+
+    currentMaskCanvas = maskCanvas;
+
+    // Upload to WebGL engine
+    engine.setMask(maskCanvas);
+    engine.invertMask = maskInvert.checked;
+
+    // Show mask overlay on the overlay canvas
+    drawMaskOverlay();
+
+    // Show mask controls
+    maskControls.style.display = '';
+    maskInfo.textContent = `${masks.length} region(s) selected`;
+
+    // Update badge
+    updateMaskBadge();
+
+    // Exit seg mode
+    exitSegMode();
+    clickPoints = [];
+  }
+
+  function drawMaskOverlay() {
+    if (!currentMasks) return;
+    const ctx = overlayCanvas.getContext('2d');
+    clearOverlay();
+
+    const w = overlayCanvas.width;
+    const h = overlayCanvas.height;
+    const overlay = SAM.renderOverlay(currentMasks, w, h);
+    ctx.drawImage(overlay, 0, 0);
+  }
+
+  function clearMask() {
+    currentMasks = null;
+    currentMaskCanvas = null;
+    engine.clearMask();
+    maskControls.style.display = 'none';
+    maskInvert.checked = false;
+    clearOverlay();
+    updateMaskBadge();
+  }
+
+  function clearOverlay() {
+    const ctx = overlayCanvas.getContext('2d');
+    ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+  }
+
+  function getCleanCanvas() {
+    // Render the source image to a temp canvas for clean API submission
+    const c = document.createElement('canvas');
+    const w = engine.imgWidth || canvas.width;
+    const h = engine.imgHeight || canvas.height;
+    c.width = w;
+    c.height = h;
+    c.getContext('2d').drawImage(sourceImage, 0, 0, w, h);
+    return c;
+  }
+
+  // Mask controls
+  btnClearMask.addEventListener('click', clearMask);
+
+  btnAddMask.addEventListener('click', () => {
+    // Go back to click mode to add more regions
+    enterClickMode();
+  });
+
+  maskInvert.addEventListener('change', () => {
+    engine.invertMask = maskInvert.checked;
+    if (engine.image) engine.drawFrame(engine.currentTime);
+    updateMaskBadge();
+  });
+
+  maskFeather.addEventListener('change', () => {
+    if (currentMasks) {
+      const w = engine.imgWidth || canvas.width;
+      const h = engine.imgHeight || canvas.height;
+      let maskCanvas = SAM.renderMaskToCanvas(currentMasks, w, h);
+      if (maskFeather.checked) maskCanvas = SAM.featherMask(maskCanvas, 6);
+      currentMaskCanvas = maskCanvas;
+      engine.setMask(maskCanvas);
+    }
+  });
+
+  function updateMaskBadge() {
+    if (!maskTargetInfo) return;
+    if (engine.hasMask) {
+      maskBadge.className = 'mask-badge' + (engine.invertMask ? ' inverted' : ' has-mask');
+      maskBadgeText.textContent = engine.invertMask ? 'Background (inverted)' : 'Selected Region';
+    } else {
+      maskBadge.className = 'mask-badge';
+      maskBadgeText.textContent = 'Full Image';
+    }
+  }
+
+  function showSegStatus(type, msg) {
+    segmentStatus.textContent = msg;
+    segmentStatus.className = 'segment-status ' + type;
+    if (type !== 'loading') {
+      setTimeout(() => { segmentStatus.className = 'segment-status'; }, 5000);
+    }
+  }
+
   // ===== Export =====
   let exportFormat = 'webm';
 
-  btnExport.addEventListener('click', () => {
-    exportModal.style.display = '';
-    exportProgress.style.display = 'none';
-  });
-
+  btnExport.addEventListener('click', () => { exportModal.style.display = ''; exportProgress.style.display = 'none'; });
   btnCancelExport.addEventListener('click', () => { exportModal.style.display = 'none'; });
-  exportModal.addEventListener('click', (e) => { if (e.target === exportModal) exportModal.style.display = 'none'; });
+  exportModal.addEventListener('click', e => { if (e.target === exportModal) exportModal.style.display = 'none'; });
 
   document.querySelectorAll('[data-format]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -403,101 +677,81 @@
     const fps = parseInt(document.getElementById('export-fps').value);
     exportProgress.style.display = '';
     btnStartExport.disabled = true;
-
     const wasPlaying = engine.playing;
     if (wasPlaying) engine.pause();
 
-    if (exportFormat === 'frames') {
-      await exportFrames(fps);
-    } else {
-      await exportVideo(fps);
-    }
+    // Hide overlay during export
+    const overlayVis = overlayCanvas.style.display;
+    overlayCanvas.style.display = 'none';
 
+    if (exportFormat === 'frames') await exportFrames(fps);
+    else await exportVideo(fps);
+
+    overlayCanvas.style.display = overlayVis;
     btnStartExport.disabled = false;
     exportModal.style.display = 'none';
     if (wasPlaying) { engine.play(); setPlayingUI(true); }
   });
 
   async function exportVideo(fps) {
-    const stream = canvas.captureStream(0); // 0 = manual frame push
+    const stream = canvas.captureStream(0);
     let mimeType = 'video/webm;codecs=vp9';
     if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/webm';
-
     const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 8000000 });
     const chunks = [];
-    recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+    recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
 
-    return new Promise((resolve) => {
+    return new Promise(resolve => {
       recorder.onstop = () => {
-        const blob = new Blob(chunks, { type: 'video/webm' });
-        downloadBlob(blob, 'shifter-animation.webm');
+        downloadBlob(new Blob(chunks, { type: 'video/webm' }), 'shifter-animation.webm');
         resolve();
       };
-
       recorder.start();
       const totalFrames = Math.ceil(engine.duration * fps);
       let frame = 0;
-
       function renderNext() {
-        if (frame > totalFrames) {
-          recorder.stop();
-          return;
-        }
-
-        const progress = frame / totalFrames;
-        engine.drawFrame(progress);
-
-        // Request frame capture
-        if (stream.getVideoTracks()[0].requestFrame) {
-          stream.getVideoTracks()[0].requestFrame();
-        }
-
-        progressFill.style.width = (progress * 100) + '%';
-        progressText.textContent = `Rendering frame ${frame}/${totalFrames}...`;
-
+        if (frame > totalFrames) { recorder.stop(); return; }
+        engine.drawFrame(frame / totalFrames);
+        if (stream.getVideoTracks()[0].requestFrame) stream.getVideoTracks()[0].requestFrame();
+        progressFill.style.width = (frame / totalFrames * 100) + '%';
+        progressText.textContent = `Rendering ${frame}/${totalFrames}...`;
         frame++;
-        // Use a small timeout to give MediaRecorder time to capture
         setTimeout(renderNext, 1000 / fps);
       }
-
       renderNext();
     });
   }
 
   async function exportFrames(fps) {
-    const totalFrames = Math.ceil(engine.duration * fps);
-
-    for (let i = 0; i <= totalFrames; i++) {
-      const progress = i / totalFrames;
-      engine.drawFrame(progress);
-
-      progressFill.style.width = (progress * 100) + '%';
-      progressText.textContent = `Saving frame ${i}/${totalFrames}...`;
-
-      const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+    const total = Math.ceil(engine.duration * fps);
+    for (let i = 0; i <= total; i++) {
+      engine.drawFrame(i / total);
+      progressFill.style.width = (i / total * 100) + '%';
+      progressText.textContent = `Frame ${i}/${total}...`;
+      const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
       downloadBlob(blob, `frame-${String(i).padStart(4, '0')}.png`);
       await new Promise(r => setTimeout(r, 50));
     }
-    progressText.textContent = `Done! ${totalFrames + 1} frames exported.`;
+    progressText.textContent = `Done! ${total + 1} frames exported.`;
   }
 
   function downloadBlob(blob, filename) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
-  // ===== Keyboard Shortcuts =====
-  document.addEventListener('keydown', (e) => {
+  // ===== Keyboard =====
+  document.addEventListener('keydown', e => {
     if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
     switch (e.code) {
       case 'Space': e.preventDefault(); btnPlay.click(); break;
-      case 'Escape': engine.stop(); setPlayingUI(false); break;
+      case 'Escape':
+        if (segMode) exitSegMode();
+        else { engine.stop(); setPlayingUI(false); }
+        break;
       case 'KeyL': btnLoop.click(); break;
     }
   });
@@ -506,9 +760,5 @@
   renderPresets();
   engine.onFrame?.(0);
   durationLabel.textContent = engine.duration.toFixed(1) + 's';
-
-  // Default the export format button
-  document.querySelectorAll('[data-format]').forEach(b => b.classList.remove('active'));
-  document.querySelector('[data-format="webm"]').classList.add('active');
 
 })();
