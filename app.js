@@ -45,9 +45,15 @@
   const btnSaveKey = document.getElementById('btn-save-key');
   const apiKeyStatus = document.getElementById('api-key-status');
   const btnQuickMode = document.getElementById('btn-quick-mode');
+  const btnBrushMode = document.getElementById('btn-brush-mode');
   const btnClickMode = document.getElementById('btn-click-mode');
   const btnTextMode = document.getElementById('btn-text-mode');
   const quickSelectSection = document.getElementById('quick-select-section');
+  const quickSelectInfo = document.getElementById('quick-select-info');
+  const quickSelectActions = document.getElementById('quick-select-actions');
+  const btnQuickApply = document.getElementById('btn-quick-apply');
+  const btnQuickReset = document.getElementById('btn-quick-reset');
+  const brushSelectSection = document.getElementById('brush-select-section');
   const brushSizeSlider = document.getElementById('brush-size');
   const brushSizeLabel = document.getElementById('brush-size-label');
   const textSegmentSection = document.getElementById('text-segment-section');
@@ -77,7 +83,7 @@
   let sourceImage = null; // original <img> for SAM
 
   // Segmentation state
-  let segMode = null; // 'quick' | 'click' | 'text' | null
+  let segMode = null; // 'quick' | 'brush' | 'click' | 'text' | null
   let clickPoints = [];
   let currentMasks = null;
   let currentMaskCanvas = null;
@@ -386,6 +392,7 @@
   function updateSamButtons() {
     const ready = SAM.hasApiKey() && imageLoaded;
     btnQuickMode.disabled = !ready;
+    btnBrushMode.disabled = !ready;
     btnClickMode.disabled = !ready;
     btnTextMode.disabled = !ready;
   }
@@ -394,6 +401,11 @@
   btnQuickMode.addEventListener('click', () => {
     if (segMode === 'quick') { exitSegMode(); return; }
     enterQuickMode();
+  });
+
+  btnBrushMode.addEventListener('click', () => {
+    if (segMode === 'brush') { exitSegMode(); return; }
+    enterBrushMode();
   });
 
   btnClickMode.addEventListener('click', () => {
@@ -411,6 +423,19 @@
     segMode = 'quick';
     btnQuickMode.classList.add('active');
     quickSelectSection.style.display = '';
+    overlayCanvas.classList.add('interactive');
+    quickMasks = [];
+    quickMaskCanvas = null;
+
+    if (engine.playing) { engine.pause(); setPlayingUI(false); }
+    engine.drawFrame(engine.currentTime);
+  }
+
+  function enterBrushMode() {
+    exitSegMode();
+    segMode = 'brush';
+    btnBrushMode.classList.add('active');
+    brushSelectSection.style.display = '';
     overlayCanvas.classList.add('interactive', 'brush-cursor');
 
     if (engine.playing) { engine.pause(); setPlayingUI(false); }
@@ -441,16 +466,196 @@
   function exitSegMode() {
     segMode = null;
     btnQuickMode.classList.remove('active');
+    btnBrushMode.classList.remove('active');
     btnClickMode.classList.remove('active');
     btnTextMode.classList.remove('active');
     quickSelectSection.style.display = 'none';
+    quickSelectInfo.style.display = 'none';
+    quickSelectActions.style.display = 'none';
+    brushSelectSection.style.display = 'none';
     clickPointsSection.style.display = 'none';
     textSegmentSection.style.display = 'none';
     overlayCanvas.classList.remove('interactive', 'brush-cursor');
     clearOverlay();
   }
 
-  // ===== Quick Select =====
+  // ===== Quick Select (Photoshop-style) =====
+  let quickMasks = [];       // accumulated mask polygons
+  let quickMaskCanvas = null; // rendered cumulative mask canvas
+  let quickSegBusy = false;
+
+  overlayCanvas.addEventListener('click', (e) => {
+    if (segMode !== 'quick') return;
+    runQuickSelect(e, true);
+  });
+
+  overlayCanvas.addEventListener('contextmenu', (e) => {
+    if (segMode !== 'quick') return;
+    e.preventDefault();
+    runQuickSelect(e, false);
+  });
+
+  async function runQuickSelect(e, positive) {
+    if (quickSegBusy) return;
+    const rect = overlayCanvas.getBoundingClientRect();
+    const scaleX = overlayCanvas.width / rect.width;
+    const scaleY = overlayCanvas.height / rect.height;
+    const x = Math.round((e.clientX - rect.left) * scaleX);
+    const y = Math.round((e.clientY - rect.top) * scaleY);
+
+    quickSegBusy = true;
+    showSegStatus('loading', positive ? 'Selecting...' : 'Subtracting...');
+
+    try {
+      const cleanCanvas = getCleanCanvas();
+      const masks = await SAM.segmentByPoint(cleanCanvas, [{ x, y, positive: true }]);
+      if (masks.length === 0) {
+        showSegStatus('error', 'No object found at that point.');
+        quickSegBusy = false;
+        return;
+      }
+
+      if (positive) {
+        // Add new masks to the cumulative selection
+        quickMasks = quickMasks.concat(masks);
+      } else {
+        // Subtract: render new masks, then erase from cumulative canvas
+        subtractFromQuickMask(masks);
+      }
+
+      renderQuickMaskOverlay();
+      showSegStatus('success', `${quickMasks.length} region(s) selected`);
+    } catch (err) {
+      showSegStatus('error', err.message);
+    }
+    quickSegBusy = false;
+  }
+
+  function subtractFromQuickMask(subtractMasks) {
+    const w = engine.imgWidth || canvas.width;
+    const h = engine.imgHeight || canvas.height;
+
+    // Build the current cumulative mask
+    if (!quickMaskCanvas) {
+      quickMaskCanvas = SAM.renderMaskToCanvas(quickMasks, w, h);
+    }
+
+    // Erase the subtract regions using destination-out compositing
+    const ctx = quickMaskCanvas.getContext('2d');
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.fillStyle = '#fff';
+    for (const mask of subtractMasks) {
+      if (!mask.points || mask.points.length < 3) continue;
+      ctx.beginPath();
+      ctx.moveTo(mask.points[0].x, mask.points[0].y);
+      for (let i = 1; i < mask.points.length; i++) {
+        ctx.lineTo(mask.points[i].x, mask.points[i].y);
+      }
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.globalCompositeOperation = 'source-over';
+
+    // Clear polygon-based masks since we're now canvas-based
+    quickMasks = [{ _canvasBased: true }];
+  }
+
+  function renderQuickMaskOverlay() {
+    const w = engine.imgWidth || canvas.width;
+    const h = engine.imgHeight || canvas.height;
+    const ctx = overlayCanvas.getContext('2d');
+    clearOverlay();
+
+    // Build cumulative mask canvas from polygons (unless canvas-based from subtract)
+    if (quickMasks.length > 0 && !quickMasks[0]._canvasBased) {
+      quickMaskCanvas = SAM.renderMaskToCanvas(quickMasks, w, h);
+    }
+
+    if (!quickMaskCanvas) return;
+
+    // Draw semi-transparent overlay
+    ctx.globalAlpha = 0.35;
+    // Tint: draw color, then mask it
+    const tint = document.createElement('canvas');
+    tint.width = w;
+    tint.height = h;
+    const tctx = tint.getContext('2d');
+    tctx.fillStyle = 'rgba(99, 102, 241, 1)';
+    tctx.fillRect(0, 0, w, h);
+    tctx.globalCompositeOperation = 'destination-in';
+    tctx.drawImage(quickMaskCanvas, 0, 0);
+    ctx.drawImage(tint, 0, 0);
+    ctx.globalAlpha = 1;
+
+    // Draw border by tracing the mask edge
+    ctx.strokeStyle = 'rgba(99, 102, 241, 0.8)';
+    ctx.lineWidth = 2;
+    // Use the mask as a clip and stroke a full rect to get edge effect
+    // Simpler: just draw the mask outline as a slightly dilated version
+    ctx.globalAlpha = 0.6;
+    ctx.globalCompositeOperation = 'source-over';
+    const edge = document.createElement('canvas');
+    edge.width = w;
+    edge.height = h;
+    const ectx = edge.getContext('2d');
+    ectx.filter = 'blur(2px)';
+    ectx.drawImage(quickMaskCanvas, 0, 0);
+    ectx.filter = 'none';
+    ectx.globalCompositeOperation = 'source-out';
+    ectx.drawImage(quickMaskCanvas, 0, 0);
+    ctx.drawImage(edge, 0, 0);
+    ctx.globalAlpha = 1;
+
+    // Show action buttons
+    quickSelectInfo.textContent = `${quickMasks.length} region(s) selected`;
+    quickSelectInfo.style.display = '';
+    quickSelectActions.style.display = '';
+  }
+
+  btnQuickApply.addEventListener('click', () => {
+    if (!quickMaskCanvas || quickMasks.length === 0) return;
+    // Convert to the standard mask flow
+    applyQuickMask();
+  });
+
+  btnQuickReset.addEventListener('click', () => {
+    quickMasks = [];
+    quickMaskCanvas = null;
+    quickSelectInfo.style.display = 'none';
+    quickSelectActions.style.display = 'none';
+    clearOverlay();
+  });
+
+  function applyQuickMask() {
+    const w = engine.imgWidth || canvas.width;
+    const h = engine.imgHeight || canvas.height;
+
+    let maskCanvas = quickMaskCanvas;
+    if (maskFeather.checked) {
+      maskCanvas = SAM.featherMask(maskCanvas, 6);
+    }
+
+    currentMasks = quickMasks;
+    currentMaskCanvas = maskCanvas;
+
+    engine.setMask(maskCanvas);
+    engine.invertMask = maskInvert.checked;
+
+    // Show mask overlay
+    const ctx = overlayCanvas.getContext('2d');
+    clearOverlay();
+    renderQuickMaskOverlay();
+
+    maskControls.style.display = '';
+    maskInfo.textContent = `${quickMasks.length} region(s) selected`;
+    updateMaskBadge();
+
+    exitSegMode();
+    quickMasks = [];
+    quickMaskCanvas = null;
+  }
+
+  // ===== Brush Select =====
   let brushSize = 20;
   let painting = false;
   let strokePath = []; // raw pixel coords of the brush stroke
@@ -463,8 +668,7 @@
   });
 
   function updateBrushCursor() {
-    if (segMode !== 'quick') return;
-    // Use a CSS custom property to drive the cursor size
+    if (segMode !== 'brush') return;
     const rect = overlayCanvas.getBoundingClientRect();
     const displaySize = Math.max(4, brushSize / (overlayCanvas.width / rect.width));
     overlayCanvas.style.setProperty('--brush-size', displaySize + 'px');
@@ -481,7 +685,7 @@
   }
 
   overlayCanvas.addEventListener('mousedown', (e) => {
-    if (segMode !== 'quick' || e.button !== 0) return;
+    if (segMode !== 'brush' || e.button !== 0) return;
     painting = true;
     strokePath = [];
     const pt = canvasCoord(e);
@@ -490,7 +694,7 @@
   });
 
   overlayCanvas.addEventListener('mousemove', (e) => {
-    if (segMode === 'quick') {
+    if (segMode === 'brush') {
       brushCursorPos = canvasCoord(e);
       if (painting) {
         strokePath.push(brushCursorPos);
@@ -502,17 +706,17 @@
   overlayCanvas.addEventListener('mouseup', () => {
     if (!painting) return;
     painting = false;
-    if (strokePath.length > 0) runQuickSegment();
+    if (strokePath.length > 0) runBrushSegment();
   });
 
   overlayCanvas.addEventListener('mouseleave', () => {
     brushCursorPos = null;
-    if (segMode === 'quick' && !painting) {
+    if (segMode === 'brush' && !painting) {
       drawBrushStroke(); // clear cursor
     }
     if (!painting) return;
     painting = false;
-    if (strokePath.length > 0) runQuickSegment();
+    if (strokePath.length > 0) runBrushSegment();
   });
 
   function drawBrushStroke() {
@@ -551,7 +755,6 @@
   }
 
   function samplePointsFromStroke(path, spacing) {
-    // Sample evenly spaced points along the stroke path
     const points = [];
     if (path.length === 0) return points;
     points.push({ x: path[0].x, y: path[0].y, positive: true });
@@ -565,7 +768,6 @@
         accumulated = 0;
       }
     }
-    // Always include the last point
     const last = path[path.length - 1];
     if (points.length === 1 || (points[points.length - 1].x !== last.x || points[points.length - 1].y !== last.y)) {
       points.push({ x: last.x, y: last.y, positive: true });
@@ -573,8 +775,7 @@
     return points;
   }
 
-  async function runQuickSegment() {
-    // Sample points along the stroke — spacing proportional to brush size
+  async function runBrushSegment() {
     const spacing = Math.max(brushSize * 1.5, 20);
     const sampled = samplePointsFromStroke(strokePath, spacing);
     strokePath = [];

@@ -74,8 +74,12 @@
             <h2 class="panel-title">Select Region</h2>
             <div class="segment-modes">
               <button id="btn-quick-mode" class="btn btn-sm seg-mode-btn" disabled>
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 12s1-4 4-6c2-1.5 4-1 5-3s-1-2-2-1-2 3-4 5-3 5-3 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v2M7 11v2M1 7h2M11 7h2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="7" cy="7" r="2.5" fill="currentColor" opacity="0.4"/><path d="M4.5 4.5L9.5 9.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
                 Quick Select
+              </button>
+              <button id="btn-brush-mode" class="btn btn-sm seg-mode-btn" disabled>
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 12s1-4 4-6c2-1.5 4-1 5-3s-1-2-2-1-2 3-4 5-3 5-3 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                Brush Select
               </button>
               <button id="btn-click-mode" class="btn btn-sm seg-mode-btn" disabled>
                 <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="3" stroke="currentColor" stroke-width="1.5"/><path d="M7 1v2M7 11v2M1 7h2M11 7h2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
@@ -100,6 +104,17 @@
           <!-- Quick Select Options -->
           <div id="quick-select-section" class="segment-section" style="display:none;">
             <h2 class="panel-title">Quick Select</h2>
+            <p class="hint">Click on an object to select it. Click more areas to add. Right-click to subtract.</p>
+            <div id="quick-select-info" class="mask-info" style="display:none;"></div>
+            <div class="btn-group" id="quick-select-actions" style="margin-top:8px; display:none;">
+              <button id="btn-quick-apply" class="btn btn-sm btn-primary">Apply Mask</button>
+              <button id="btn-quick-reset" class="btn btn-sm">Reset</button>
+            </div>
+          </div>
+
+          <!-- Brush Select Options -->
+          <div id="brush-select-section" class="segment-section" style="display:none;">
+            <h2 class="panel-title">Brush Select</h2>
             <p class="hint">Paint over the object you want to select. Release to segment.</p>
             <div class="param-row">
               <div class="param-label"><span>Brush Size</span><span class="param-value" id="brush-size-label">20</span></div>
