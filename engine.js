@@ -389,8 +389,8 @@ class ShaderEngine {
     this.speed = 0.5;
     this.playing = false;
     this.looping = true;
-    this.startTime = 0;
     this.currentTime = 0;
+    this._lastTickTime = 0;
     this.animFrame = null;
     this.onFrame = null;
     this.uniformCache = {};
@@ -735,7 +735,7 @@ class ShaderEngine {
   play() {
     if (!this.image || !this.effect) return;
     this.playing = true;
-    this.startTime = performance.now() - (this.currentTime * this.duration / this.speed) * 1000;
+    this._lastTickTime = performance.now();
     this._tick();
   }
 
@@ -754,7 +754,6 @@ class ShaderEngine {
 
   seekTo(progress) {
     this.currentTime = Math.max(0, Math.min(1, progress));
-    this.startTime = performance.now() - (this.currentTime * this.duration / this.speed) * 1000;
     this.drawFrame(this.currentTime);
     if (this.onFrame) this.onFrame(this.currentTime);
   }
@@ -762,22 +761,23 @@ class ShaderEngine {
   _tick() {
     if (!this.playing) return;
 
-    const elapsed = (performance.now() - this.startTime) / 1000 * this.speed;
-    let progress = elapsed / this.duration;
+    const now = performance.now();
+    const dt = (now - this._lastTickTime) / 1000;
+    this._lastTickTime = now;
 
-    if (progress >= 1) {
+    this.currentTime += dt * this.speed / this.duration;
+
+    if (this.currentTime >= 1) {
       if (this.looping) {
-        this.startTime = performance.now();
-        progress = 0;
+        this.currentTime = this.currentTime % 1;
       } else {
-        progress = 1;
+        this.currentTime = 1;
         this.playing = false;
       }
     }
 
-    this.currentTime = progress;
-    this.drawFrame(progress);
-    if (this.onFrame) this.onFrame(progress);
+    this.drawFrame(this.currentTime);
+    if (this.onFrame) this.onFrame(this.currentTime);
 
     if (this.playing) {
       this.animFrame = requestAnimationFrame(() => this._tick());
