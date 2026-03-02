@@ -360,11 +360,13 @@
     engine.seekTo(Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)));
   }
 
-  speedSlider.addEventListener('input', () => {
+  function onSpeedChange() {
     const val = parseFloat(speedSlider.value);
     engine.speed = val;
     speedLabel.textContent = val.toFixed(1) + 'x';
-  });
+  }
+  speedSlider.addEventListener('input', onSpeedChange);
+  speedSlider.addEventListener('change', onSpeedChange);
 
   durationSlider.addEventListener('input', () => {
     const val = parseFloat(durationSlider.value);
@@ -492,15 +494,19 @@
   let quickMaskCanvas = null; // rendered cumulative mask canvas
   let quickSegBusy = false;
 
-  overlayCanvas.addEventListener('click', (e) => {
+  overlayCanvas.addEventListener('mousedown', (e) => {
     if (segMode !== 'quick') return;
-    runQuickSelect(e, true);
+    if (e.button === 0) {
+      e.preventDefault();
+      runQuickSelect(e, true);
+    } else if (e.button === 2) {
+      e.preventDefault();
+      runQuickSelect(e, false);
+    }
   });
 
   overlayCanvas.addEventListener('contextmenu', (e) => {
-    if (segMode !== 'quick') return;
-    e.preventDefault();
-    runQuickSelect(e, false);
+    if (segMode === 'quick') e.preventDefault();
   });
 
   async function runQuickSelect(e, positive) {

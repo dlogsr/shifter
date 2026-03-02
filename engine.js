@@ -762,10 +762,12 @@ class ShaderEngine {
     if (!this.playing) return;
 
     const now = performance.now();
-    const dt = (now - this._lastTickTime) / 1000;
+    const rawDt = (now - this._lastTickTime) / 1000;
+    const dt = Math.min(rawDt, 0.1); // cap at 100ms to handle tab-backgrounding
     this._lastTickTime = now;
 
-    this.currentTime += dt * this.speed / this.duration;
+    const speed = this.speed || 0.5;
+    this.currentTime += (dt * speed) / this.duration;
 
     if (this.currentTime >= 1) {
       if (this.looping) {
