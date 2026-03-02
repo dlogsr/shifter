@@ -363,10 +363,6 @@
   speedSlider.addEventListener('input', () => {
     const val = parseFloat(speedSlider.value);
     engine.speed = val;
-    // Recalculate startTime so playback continues smoothly from current position
-    if (engine.playing) {
-      engine.startTime = performance.now() - (engine.currentTime * engine.duration / val) * 1000;
-    }
     speedLabel.textContent = val.toFixed(1) + 'x';
   });
 
