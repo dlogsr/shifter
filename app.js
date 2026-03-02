@@ -26,6 +26,8 @@
   const timelineProgress = document.getElementById('timeline-progress');
   const timelineHandle = document.getElementById('timeline-handle');
   const timeDisplay = document.getElementById('time-display');
+  const speedSlider = document.getElementById('speed');
+  const speedLabel = document.getElementById('speed-label');
   const durationSlider = document.getElementById('duration');
   const durationLabel = document.getElementById('duration-label');
   const effectStack = document.getElementById('effect-stack');
@@ -357,6 +359,16 @@
     const rect = timelineTrack.getBoundingClientRect();
     engine.seekTo(Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)));
   }
+
+  speedSlider.addEventListener('input', () => {
+    const val = parseFloat(speedSlider.value);
+    engine.speed = val;
+    // Recalculate startTime so playback continues smoothly from current position
+    if (engine.playing) {
+      engine.startTime = performance.now() - (engine.currentTime * engine.duration / val) * 1000;
+    }
+    speedLabel.textContent = val.toFixed(1) + 'x';
+  });
 
   durationSlider.addEventListener('input', () => {
     const val = parseFloat(durationSlider.value);
@@ -1129,6 +1141,7 @@
   // ===== Init =====
   renderPresets();
   engine.onFrame?.(0);
+  speedLabel.textContent = engine.speed.toFixed(1) + 'x';
   durationLabel.textContent = engine.duration.toFixed(1) + 's';
 
 })();
