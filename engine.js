@@ -386,6 +386,7 @@ class ShaderEngine {
     this.effect = null;
     this.easing = 'easeInOut';
     this.duration = 3;
+    this.speed = 0.5;
     this.playing = false;
     this.looping = true;
     this.startTime = 0;
@@ -734,7 +735,7 @@ class ShaderEngine {
   play() {
     if (!this.image || !this.effect) return;
     this.playing = true;
-    this.startTime = performance.now() - this.currentTime * this.duration * 1000;
+    this.startTime = performance.now() - (this.currentTime * this.duration / this.speed) * 1000;
     this._tick();
   }
 
@@ -753,7 +754,7 @@ class ShaderEngine {
 
   seekTo(progress) {
     this.currentTime = Math.max(0, Math.min(1, progress));
-    this.startTime = performance.now() - this.currentTime * this.duration * 1000;
+    this.startTime = performance.now() - (this.currentTime * this.duration / this.speed) * 1000;
     this.drawFrame(this.currentTime);
     if (this.onFrame) this.onFrame(this.currentTime);
   }
@@ -761,7 +762,7 @@ class ShaderEngine {
   _tick() {
     if (!this.playing) return;
 
-    const elapsed = (performance.now() - this.startTime) / 1000;
+    const elapsed = (performance.now() - this.startTime) / 1000 * this.speed;
     let progress = elapsed / this.duration;
 
     if (progress >= 1) {
