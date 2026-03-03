@@ -86,7 +86,7 @@ body {
   accent-color: var(--accent);
 }
 
-#duration-label {
+#duration-label, #speed-label {
   font-family: var(--font-mono);
   font-size: 12px;
   min-width: 32px;
@@ -819,13 +819,129 @@ canvas {
 .btn-delete-preset:hover { color: var(--danger); }
 
 /* ===== Responsive ===== */
+
+/* Tablet */
 @media (max-width: 960px) {
   .panel { width: 220px; }
 }
 
+/* Mobile */
 @media (max-width: 768px) {
-  .main { flex-direction: column; }
-  .panel { width: 100%; max-height: 200px; border-right: none; border-bottom: 1px solid var(--border); }
-  .panel-right { border-left: none; border-top: 1px solid var(--border); }
-  .upload-overlay { min-width: 300px; min-height: 240px; }
+  /* Allow vertical scroll instead of fixed viewport */
+  body { overflow-y: auto; overflow-x: hidden; }
+  #app { height: auto; min-height: 100vh; min-height: 100dvh; }
+
+  /* Compact header — wrap controls */
+  .header {
+    height: auto;
+    min-height: 48px;
+    padding: 8px 12px;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .header-actions { gap: 8px; flex-wrap: wrap; }
+  .duration-control input[type="range"] { width: 60px; }
+  .duration-control label { font-size: 11px; }
+
+  /* Stack vertically, preview FIRST */
+  .main {
+    flex-direction: column;
+    flex: none;
+    overflow: visible;
+  }
+
+  /* Preview area takes at least half the screen */
+  .preview-area {
+    order: -1;
+    min-height: 50vh;
+    min-height: 50dvh;
+    flex: none;
+    padding: 10px;
+    gap: 10px;
+  }
+
+  /* Canvas scales to fit within the preview area */
+  .canvas-wrapper {
+    max-height: calc(50vh - 90px);
+    max-height: calc(50dvh - 90px);
+    width: 100%;
+  }
+  canvas {
+    max-height: calc(50vh - 90px);
+    max-height: calc(50dvh - 90px);
+    width: auto;
+    max-width: 100%;
+  }
+
+  /* Canvas wrapper needs min-height on mobile for upload state */
+  .canvas-wrapper {
+    min-height: 200px;
+  }
+
+  /* Upload overlay fits mobile */
+  .upload-overlay {
+    min-width: auto;
+    min-height: 200px;
+  }
+
+  /* Playback controls full width */
+  .playback-controls { max-width: 100%; }
+  .time-display { min-width: 60px; font-size: 10px; }
+
+  /* Panels stack below as full-width sections */
+  .panel {
+    width: 100%;
+    flex: none;
+    max-height: none;
+    border-right: none;
+    border-left: none;
+    border-top: 1px solid var(--border);
+    border-bottom: none;
+  }
+  .panel-left { order: 0; }
+  .panel-right { order: 1; border-left: none; border-top: 1px solid var(--border); }
+
+  /* Modals fit mobile */
+  .modal-content {
+    min-width: auto;
+    width: calc(100vw - 32px);
+    max-width: 400px;
+  }
+}
+
+/* Small phones */
+@media (max-width: 480px) {
+  .header { padding: 6px 10px; }
+  .header-actions { gap: 6px; }
+  .duration-control { gap: 4px; }
+  .duration-control input[type="range"] { width: 50px; }
+  .logo span { font-size: 15px; }
+
+  .preview-area { padding: 6px; gap: 8px; }
+
+  .canvas-wrapper {
+    max-height: calc(50vh - 70px);
+    max-height: calc(50dvh - 70px);
+  }
+  canvas {
+    max-height: calc(50vh - 70px);
+    max-height: calc(50dvh - 70px);
+  }
+
+  .panel { padding: 12px; }
+  .preset-icon { width: 28px; height: 28px; font-size: 14px; }
+  .preset-name { font-size: 12px; }
+
+  .btn { padding: 6px 12px; font-size: 12px; }
+  .btn-icon { width: 32px; height: 32px; }
+
+  .playback-controls { gap: 4px; }
+  .time-display { min-width: 50px; font-size: 9px; }
+
+  .upload-overlay { min-height: 160px; }
+  .upload-content p { font-size: 13px; }
+  .upload-hint { font-size: 11px; }
+
+  .btn-replace-image .replace-label { display: none; }
+  .btn-replace-image { padding: 6px 8px; gap: 0; }
 }
