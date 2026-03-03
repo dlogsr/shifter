@@ -551,9 +551,18 @@
   timelineTrack.addEventListener('mousedown', e => { scrubbing = true; scrubTo(e); });
   document.addEventListener('mousemove', e => { if (scrubbing) scrubTo(e); });
   document.addEventListener('mouseup', () => { scrubbing = false; });
+  // Touch support for timeline
+  timelineTrack.addEventListener('touchstart', e => { scrubbing = true; scrubToTouch(e); }, { passive: false });
+  document.addEventListener('touchmove', e => { if (scrubbing) { e.preventDefault(); scrubToTouch(e); } }, { passive: false });
+  document.addEventListener('touchend', () => { scrubbing = false; });
   function scrubTo(e) {
     const rect = timelineTrack.getBoundingClientRect();
     engine.seekTo(Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)));
+  }
+  function scrubToTouch(e) {
+    if (!e.touches.length) return;
+    const rect = timelineTrack.getBoundingClientRect();
+    engine.seekTo(Math.max(0, Math.min(1, (e.touches[0].clientX - rect.left) / rect.width)));
   }
 
   function onSpeedChange() {
@@ -698,6 +707,14 @@
     } else if (e.button === 2) {
       e.preventDefault();
       runQuickSelect(e, false);
+    }
+  });
+
+  // Touch support for quick select
+  overlayCanvas.addEventListener('touchend', (e) => {
+    if (segMode === 'quick' && e.changedTouches.length) {
+      e.preventDefault();
+      runQuickSelect(e.changedTouches[0], true);
     }
   });
 
@@ -1008,27 +1025,33 @@
   }
 
   // ===== Click-to-Segment =====
-  overlayCanvas.addEventListener('click', (e) => {
-    if (segMode !== 'click') return;
+  function addClickPoint(clientX, clientY, positive) {
     const rect = overlayCanvas.getBoundingClientRect();
     const scaleX = overlayCanvas.width / rect.width;
     const scaleY = overlayCanvas.height / rect.height;
-    const x = Math.round((e.clientX - rect.left) * scaleX);
-    const y = Math.round((e.clientY - rect.top) * scaleY);
-    clickPoints.push({ x, y, positive: true });
+    const x = Math.round((clientX - rect.left) * scaleX);
+    const y = Math.round((clientY - rect.top) * scaleY);
+    clickPoints.push({ x, y, positive });
     renderClickPoints();
+  }
+
+  overlayCanvas.addEventListener('click', (e) => {
+    if (segMode !== 'click') return;
+    addClickPoint(e.clientX, e.clientY, true);
+  });
+
+  // Touch support for click-to-segment
+  overlayCanvas.addEventListener('touchend', (e) => {
+    if (segMode !== 'click' || !e.changedTouches.length) return;
+    e.preventDefault();
+    const t = e.changedTouches[0];
+    addClickPoint(t.clientX, t.clientY, true);
   });
 
   overlayCanvas.addEventListener('contextmenu', (e) => {
     if (segMode !== 'click') return;
     e.preventDefault();
-    const rect = overlayCanvas.getBoundingClientRect();
-    const scaleX = overlayCanvas.width / rect.width;
-    const scaleY = overlayCanvas.height / rect.height;
-    const x = Math.round((e.clientX - rect.left) * scaleX);
-    const y = Math.round((e.clientY - rect.top) * scaleY);
-    clickPoints.push({ x, y, positive: false });
-    renderClickPoints();
+    addClickPoint(e.clientX, e.clientY, false);
   });
 
   function renderClickPoints() {
