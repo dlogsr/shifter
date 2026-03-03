@@ -50,6 +50,13 @@
         <div id="tab-presets" class="tab-content active">
           <div id="preset-list" class="preset-list"></div>
 
+          <div class="save-preset-section" style="display:none;" id="save-preset-section">
+            <button id="btn-save-preset" class="btn btn-sm btn-save-preset">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+              Save Current Effect
+            </button>
+          </div>
+
           <div class="prompt-section">
             <h2 class="panel-title">Describe Motion</h2>
             <textarea id="prompt-input" placeholder="e.g. slow liquid warp with chromatic aberration and glow..." rows="3"></textarea>
@@ -175,9 +182,15 @@
               </svg>
               <p>Drop an image here or click to upload</p>
               <span class="upload-hint">PNG, JPG, WebP — any size</span>
+              <button id="btn-try-demo" class="btn btn-sm btn-demo">Try Demo Image</button>
             </div>
             <input type="file" id="file-input" accept="image/*" hidden>
           </div>
+          <!-- Replace / Remove image button (shown when image is loaded) -->
+          <button id="btn-replace-image" class="btn-replace-image" style="display:none;">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 7h10M7 2l5 5-5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Replace Image
+          </button>
         </div>
 
         <!-- Playback Controls -->
@@ -258,6 +271,34 @@
       <div class="modal-actions">
         <button id="btn-cancel-export" class="btn">Cancel</button>
         <button id="btn-start-export" class="btn btn-primary">Render</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Save Preset Modal -->
+  <div id="save-preset-modal" class="modal" style="display:none;">
+    <div class="modal-content">
+      <h2>Save Preset</h2>
+      <div class="save-preset-form">
+        <div class="form-row">
+          <label>Icon</label>
+          <div class="emoji-picker-row">
+            <span id="save-preset-emoji" class="emoji-preview">🎭</span>
+            <span class="hint">Auto-selected from effect type</span>
+          </div>
+        </div>
+        <div class="form-row">
+          <label>Name</label>
+          <input type="text" id="save-preset-name" class="text-input" placeholder="My Custom Effect">
+        </div>
+        <div class="form-row">
+          <label>Description</label>
+          <input type="text" id="save-preset-desc" class="text-input" placeholder="Describe your effect...">
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button id="btn-cancel-save" class="btn">Cancel</button>
+        <button id="btn-confirm-save" class="btn btn-primary">Save Preset</button>
       </div>
     </div>
   </div>
