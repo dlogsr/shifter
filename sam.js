@@ -6,7 +6,8 @@
 
 const SAM = (() => {
   const API_BASE = 'https://serverless.roboflow.com';
-  let apiKey = localStorage.getItem('shifter_roboflow_key') || '';
+  const DEFAULT_API_KEY = '9SUUG4R4vOxRxeZewweT';
+  let apiKey = localStorage.getItem('shifter_roboflow_key') || DEFAULT_API_KEY;
 
   function setApiKey(key) {
     apiKey = key.trim();
