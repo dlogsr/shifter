@@ -42,6 +42,20 @@
   const progressText = document.getElementById('progress-text');
   const exportProgress = document.getElementById('export-progress');
 
+  // Demo & Replace DOM
+  const btnTryDemo = document.getElementById('btn-try-demo');
+  const btnReplaceImage = document.getElementById('btn-replace-image');
+
+  // Save Preset DOM
+  const savePresetSection = document.getElementById('save-preset-section');
+  const btnSavePreset = document.getElementById('btn-save-preset');
+  const savePresetModal = document.getElementById('save-preset-modal');
+  const savePresetName = document.getElementById('save-preset-name');
+  const savePresetDesc = document.getElementById('save-preset-desc');
+  const savePresetEmoji = document.getElementById('save-preset-emoji');
+  const btnCancelSave = document.getElementById('btn-cancel-save');
+  const btnConfirmSave = document.getElementById('btn-confirm-save');
+
   // SAM DOM
   const apiKeyInput = document.getElementById('api-key-input');
   const btnSaveKey = document.getElementById('btn-save-key');
@@ -84,6 +98,9 @@
   let imageLoaded = false;
   let sourceImage = null; // original <img> for SAM
 
+  // Custom presets (localStorage)
+  let customPresets = JSON.parse(localStorage.getItem('shifter_custom_presets') || '[]');
+
   // Segmentation state
   let segMode = null; // 'quick' | 'brush' | 'click' | 'text' | null
   let clickPoints = [];
@@ -106,20 +123,55 @@
   // ===== Presets =====
   function renderPresets() {
     presetList.innerHTML = '';
+
+    // Custom (saved) presets first
+    if (customPresets.length > 0) {
+      const hdr = document.createElement('div');
+      hdr.className = 'preset-section-header';
+      hdr.textContent = 'Saved';
+      presetList.appendChild(hdr);
+
+      customPresets.forEach(preset => {
+        presetList.appendChild(createPresetItem(preset, true));
+      });
+
+      const hdr2 = document.createElement('div');
+      hdr2.className = 'preset-section-header';
+      hdr2.textContent = 'Built-in';
+      presetList.appendChild(hdr2);
+    }
+
+    // Built-in presets
     PRESETS.forEach(preset => {
-      const el = document.createElement('div');
-      el.className = 'preset-item';
-      el.dataset.id = preset.id;
-      el.innerHTML = `
-        <div class="preset-icon">${preset.icon}</div>
-        <div class="preset-info">
-          <div class="preset-name">${preset.name}</div>
-          <div class="preset-desc">${preset.description}</div>
-        </div>
-      `;
-      el.addEventListener('click', () => selectPreset(preset));
-      presetList.appendChild(el);
+      presetList.appendChild(createPresetItem(preset, false));
     });
+  }
+
+  function createPresetItem(preset, isCustom) {
+    const el = document.createElement('div');
+    el.className = 'preset-item';
+    el.dataset.id = preset.id;
+    el.innerHTML = `
+      <div class="preset-icon">${preset.icon}</div>
+      <div class="preset-info">
+        <div class="preset-name">${preset.name}</div>
+        <div class="preset-desc">${preset.description}</div>
+      </div>
+      ${isCustom ? '<button class="btn-delete-preset" title="Delete">&times;</button>' : ''}
+    `;
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('.btn-delete-preset')) return;
+      selectPreset(preset);
+    });
+    if (isCustom) {
+      el.querySelector('.btn-delete-preset').addEventListener('click', (e) => {
+        e.stopPropagation();
+        customPresets = customPresets.filter(p => p.id !== preset.id);
+        localStorage.setItem('shifter_custom_presets', JSON.stringify(customPresets));
+        renderPresets();
+      });
+    }
+    return el;
   }
 
   function selectPreset(preset) {
@@ -153,6 +205,9 @@
     updateEffectStack();
     updateParams();
     updateMaskBadge();
+
+    // Show save preset button whenever we have an active effect
+    savePresetSection.style.display = '';
 
     if (imageLoaded) {
       btnPlay.disabled = false;
@@ -267,36 +322,177 @@
   // ===== Image Upload =====
   function handleFile(file) {
     if (!file || !file.type.startsWith('image/')) return;
-
     const img = new Image();
-    img.onload = () => {
-      imageLoaded = true;
-      sourceImage = img;
-      uploadOverlay.style.display = 'none';
-      engine.setImage(img);
-
-      // Size overlay canvas to match
-      overlayCanvas.width = engine.imgWidth || canvas.width;
-      overlayCanvas.height = engine.imgHeight || canvas.height;
-
-      // Enable SAM buttons
-      updateSamButtons();
-
-      // Clear any existing mask
-      clearMask();
-
-      if (currentEffect) {
-        btnPlay.disabled = false;
-        btnStop.disabled = false;
-        btnExport.disabled = false;
-        easingSection.style.display = '';
-        maskTargetInfo.style.display = '';
-      }
-    };
+    img.onload = () => loadImage(img);
     img.src = URL.createObjectURL(file);
   }
 
-  uploadOverlay.addEventListener('click', () => fileInput.click());
+  function loadImage(img) {
+    imageLoaded = true;
+    sourceImage = img;
+    uploadOverlay.style.display = 'none';
+    btnReplaceImage.style.display = '';
+    engine.setImage(img);
+
+    overlayCanvas.width = engine.imgWidth || canvas.width;
+    overlayCanvas.height = engine.imgHeight || canvas.height;
+
+    updateSamButtons();
+    clearMask();
+
+    if (currentEffect) {
+      btnPlay.disabled = false;
+      btnStop.disabled = false;
+      btnExport.disabled = false;
+      easingSection.style.display = '';
+      maskTargetInfo.style.display = '';
+      savePresetSection.style.display = '';
+    }
+  }
+
+  // Replace / Remove image
+  btnReplaceImage.addEventListener('click', () => {
+    engine.pause();
+    setPlayingUI(false);
+    imageLoaded = false;
+    sourceImage = null;
+    clearMask();
+    exitSegMode();
+    uploadOverlay.style.display = '';
+    btnReplaceImage.style.display = 'none';
+    btnPlay.disabled = true;
+    btnStop.disabled = true;
+    btnExport.disabled = true;
+    updateSamButtons();
+    fileInput.click();
+  });
+
+  // Demo image
+  btnTryDemo.addEventListener('click', (e) => {
+    e.stopPropagation();
+    loadDemoImage();
+  });
+
+  async function loadDemoImage() {
+    // Try to load demo.jpg from project directory first
+    try {
+      const resp = await fetch('demo.jpg');
+      if (resp.ok) {
+        const blob = await resp.blob();
+        const img = new Image();
+        img.onload = () => loadImage(img);
+        img.src = URL.createObjectURL(blob);
+        return;
+      }
+    } catch (e) { /* fall through to procedural */ }
+
+    // Generate procedural demo image
+    const c = generateDemoImage();
+    const img = new Image();
+    img.onload = () => loadImage(img);
+    img.src = c.toDataURL('image/jpeg', 0.92);
+  }
+
+  function generateDemoImage() {
+    const w = 1280, h = 720;
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const ctx = c.getContext('2d');
+
+    // Night sky gradient
+    const sky = ctx.createLinearGradient(0, 0, 0, h);
+    sky.addColorStop(0, '#050510');
+    sky.addColorStop(0.3, '#0a0a2e');
+    sky.addColorStop(0.55, '#151538');
+    sky.addColorStop(1, '#0a0a1a');
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, w, h);
+
+    // Stars
+    for (let i = 0; i < 80; i++) {
+      ctx.fillStyle = `rgba(255,255,255,${0.2 + Math.random() * 0.6})`;
+      ctx.fillRect(Math.random() * w, Math.random() * h * 0.4, Math.random() * 2, Math.random() * 2);
+    }
+
+    // City buildings
+    const neonColors = ['#ff006e', '#00f5ff', '#ff00ff', '#00ff88', '#ffaa00', '#ff4444', '#4488ff'];
+    for (let i = 0; i < 28; i++) {
+      const bx = (i / 28) * w - 15 + Math.random() * 50;
+      const bw = 30 + Math.random() * 80;
+      const bh = 60 + Math.random() * 420;
+      const by = h * 0.72 - bh;
+      ctx.fillStyle = `hsl(${225 + Math.random() * 25}, 28%, ${8 + Math.random() * 10}%)`;
+      ctx.fillRect(bx, by, bw, bh + h * 0.28);
+
+      // Windows
+      for (let wy = by + 6; wy < h * 0.72 - 6; wy += 16) {
+        for (let wx = bx + 4; wx < bx + bw - 4; wx += 11) {
+          if (Math.random() > 0.3) {
+            const wh = Math.random() > 0.8 ? 30 : 45;
+            ctx.fillStyle = `hsla(${wh}, 80%, 65%, ${0.15 + Math.random() * 0.7})`;
+            ctx.fillRect(wx, wy, 6, 9);
+          }
+        }
+      }
+    }
+
+    // Neon signs
+    ctx.save();
+    for (let i = 0; i < 14; i++) {
+      const color = neonColors[Math.floor(Math.random() * neonColors.length)];
+      ctx.fillStyle = color;
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 12 + Math.random() * 20;
+      ctx.globalAlpha = 0.4 + Math.random() * 0.5;
+      ctx.fillRect(40 + Math.random() * (w - 80), h * 0.2 + Math.random() * h * 0.4, 30 + Math.random() * 110, 6 + Math.random() * 18);
+    }
+    ctx.restore();
+
+    // Ground / wet street
+    ctx.fillStyle = '#0e0e1c';
+    ctx.fillRect(0, h * 0.72, w, h * 0.28);
+    for (let i = 0; i < 25; i++) {
+      const color = neonColors[Math.floor(Math.random() * neonColors.length)];
+      ctx.fillStyle = color;
+      ctx.globalAlpha = 0.05 + Math.random() * 0.1;
+      ctx.fillRect(Math.random() * w, h * 0.74 + Math.random() * h * 0.22, 100 + Math.random() * 300, 1 + Math.random() * 2);
+    }
+    ctx.globalAlpha = 1;
+
+    // Center subject (car silhouette)
+    ctx.fillStyle = '#181828';
+    const carX = w * 0.35, carY = h * 0.68, carW = w * 0.3, carH = h * 0.08;
+    ctx.beginPath();
+    ctx.moveTo(carX, carY + carH);
+    ctx.lineTo(carX + carW, carY + carH);
+    ctx.lineTo(carX + carW - 10, carY + carH * 0.3);
+    ctx.lineTo(carX + carW * 0.7, carY);
+    ctx.lineTo(carX + carW * 0.3, carY);
+    ctx.lineTo(carX + 10, carY + carH * 0.3);
+    ctx.closePath();
+    ctx.fill();
+
+    // Car highlights
+    ctx.strokeStyle = neonColors[0];
+    ctx.shadowColor = neonColors[0];
+    ctx.shadowBlur = 8;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(carX + carW - 8, carY + carH * 0.5);
+    ctx.lineTo(carX + carW + 5, carY + carH * 0.5);
+    ctx.stroke();
+    ctx.strokeStyle = neonColors[1];
+    ctx.shadowColor = neonColors[1];
+    ctx.beginPath();
+    ctx.moveTo(carX + 8, carY + carH * 0.5);
+    ctx.lineTo(carX - 5, carY + carH * 0.5);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    return c;
+  }
+
+  uploadOverlay.addEventListener('click', (e) => { if (e.target === uploadOverlay || e.target.closest('.upload-content') && !e.target.closest('.btn-demo')) fileInput.click(); });
   fileInput.addEventListener('change', (e) => { if (e.target.files[0]) handleFile(e.target.files[0]); });
 
   ['dragover', 'dragenter'].forEach(evt => {
@@ -1138,6 +1334,70 @@
         break;
       case 'KeyL': btnLoop.click(); break;
     }
+  });
+
+  // ===== Save Preset =====
+  const EMOJI_MAP = {
+    glitch: '⚡', noiseWarp: '🌊', liquify: '🌀', zoom: '🔍',
+    ripple: '💧', chromatic: '🌈', rgbSplit: '🔴', blur: '💨',
+    hueShift: '🎨', saturation: '🎨', glow: '✨', rotate: '🔄',
+    wave: '〰️', displace: '💥', vignette: '🎬', brightness: '☀️',
+    contrast: '🎭', smear: '🖌️', fracture: '🪟', pixelate: '👾',
+    pixelStretch: '📊', edgeDetect: '🔲'
+  };
+
+  function autoPickEmoji(effect) {
+    if (!effect || !effect.layers || !effect.layers.length) return '🎭';
+    // Count layer types and pick emoji for the most prominent
+    const counts = {};
+    effect.layers.forEach(l => { counts[l.type] = (counts[l.type] || 0) + 1; });
+    const primary = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0];
+    return EMOJI_MAP[primary] || '🎭';
+  }
+
+  btnSavePreset.addEventListener('click', () => {
+    if (!currentEffect) return;
+    savePresetName.value = currentEffect.name || '';
+    savePresetDesc.value = currentEffect.description || '';
+    savePresetEmoji.textContent = autoPickEmoji(currentEffect);
+    savePresetModal.style.display = '';
+  });
+
+  btnCancelSave.addEventListener('click', () => {
+    savePresetModal.style.display = 'none';
+  });
+
+  savePresetModal.addEventListener('click', (e) => {
+    if (e.target === savePresetModal) savePresetModal.style.display = 'none';
+  });
+
+  btnConfirmSave.addEventListener('click', () => {
+    const name = savePresetName.value.trim() || 'Custom Effect';
+    const desc = savePresetDesc.value.trim() || '';
+    const emoji = savePresetEmoji.textContent;
+    const id = 'custom-' + Date.now();
+
+    const preset = {
+      id,
+      name,
+      icon: emoji,
+      description: desc,
+      category: 'custom',
+      layers: JSON.parse(JSON.stringify(currentEffect.layers))
+    };
+
+    if (currentEffect.defaultEasing) preset.defaultEasing = currentEffect.defaultEasing;
+
+    customPresets.push(preset);
+    localStorage.setItem('shifter_custom_presets', JSON.stringify(customPresets));
+    renderPresets();
+    savePresetModal.style.display = 'none';
+
+    // Highlight the newly saved preset
+    document.querySelectorAll('.preset-item').forEach(el => {
+      el.classList.toggle('active', el.dataset.id === id);
+    });
+    currentPresetId = id;
   });
 
   // ===== Init =====
