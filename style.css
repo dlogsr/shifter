@@ -827,6 +827,23 @@ canvas {
   opacity: 0.6;
 }
 
+/* ===== Footer ===== */
+.site-footer {
+  text-align: center;
+  padding: 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+  opacity: 0.6;
+}
+.site-footer a {
+  color: var(--text-dim);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.site-footer a:hover {
+  color: var(--text-secondary);
+}
+
 /* ===== Responsive ===== */
 
 /* Tablet */
