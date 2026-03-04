@@ -1363,12 +1363,18 @@
       return exportVideo(fps);
     }
 
-    const { Muxer, ArrayBufferTarget } = await import('https://cdn.jsdelivr.net/npm/mp4-muxer@5/build/mp4-muxer.mjs');
+    let Muxer, ArrayBufferTarget;
+    try {
+      ({ Muxer, ArrayBufferTarget } = await import('https://cdn.jsdelivr.net/npm/mp4-muxer@5/build/mp4-muxer.mjs'));
+    } catch (e) {
+      alert('Failed to load MP4 encoder. Falling back to WebM.');
+      return exportVideo(fps);
+    }
 
     const totalFrames = Math.ceil(engine.duration * fps);
     // H.264 requires even dimensions
-    const width = canvas.width % 2 === 0 ? canvas.width : canvas.width + 1;
-    const height = canvas.height % 2 === 0 ? canvas.height : canvas.height + 1;
+    const width = canvas.width + (canvas.width % 2);
+    const height = canvas.height + (canvas.height % 2);
 
     const target = new ArrayBufferTarget();
     const muxer = new Muxer({
@@ -1377,9 +1383,10 @@
       fastStart: 'in-memory',
     });
 
+    let encodeError = null;
     const encoder = new VideoEncoder({
       output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
-      error: e => console.error('VideoEncoder error:', e),
+      error: e => { encodeError = e; },
     });
 
     encoder.configure({
@@ -1391,6 +1398,8 @@
     });
 
     for (let i = 0; i <= totalFrames; i++) {
+      if (encodeError) throw encodeError;
+
       engine.drawFrame(i / totalFrames);
       progressFill.style.width = (i / totalFrames * 100) + '%';
       progressText.textContent = `Rendering ${i}/${totalFrames}...`;
@@ -1401,8 +1410,12 @@
       encoder.encode(frame, { keyFrame: i % (fps * 2) === 0 });
       frame.close();
 
-      // Yield to UI for progress updates
-      if (i % 5 === 0) await new Promise(r => setTimeout(r, 0));
+      // Backpressure: wait if encoder queue backs up
+      while (encoder.encodeQueueSize > 10) {
+        await new Promise(r => setTimeout(r, 10));
+      }
+      // Yield to UI every frame for smooth progress
+      await new Promise(r => setTimeout(r, 0));
     }
 
     await encoder.flush();
