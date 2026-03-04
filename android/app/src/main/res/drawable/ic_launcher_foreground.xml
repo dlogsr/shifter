@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Shifter icon: rounded rect with arrow, centered in 108dp adaptive icon safe zone (24dp inset) -->
+    <!-- Rounded rect -->
+    <path
+        android:pathData="M30,30 L78,30 Q84,30 84,36 L84,72 Q84,78 78,78 L30,78 Q24,78 24,72 L24,36 Q24,30 30,30 Z"
+        android:strokeColor="#8B7AFA"
+        android:strokeWidth="2.5"
+        android:fillColor="#00000000"/>
+    <!-- Arrow line -->
+    <path
+        android:pathData="M41,54 L67,54"
+        android:strokeColor="#8B7AFA"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"/>
+    <!-- Arrow head -->
+    <path
+        android:pathData="M54,43 L65,54 L54,65"
+        android:strokeColor="#8B7AFA"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000"/>
+</vector>
