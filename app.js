@@ -93,7 +93,7 @@
   // ===== Engine =====
   const engine = new ShaderEngine(canvas);
 
-  let currentPresetId = null;
+  let activePresetIds = new Set();
   let currentEffect = null;
   let imageLoaded = false;
   let sourceImage = null; // original <img> for SAM
@@ -145,6 +145,12 @@
     PRESETS.forEach(preset => {
       presetList.appendChild(createPresetItem(preset, false));
     });
+
+    // Stacking hint
+    const hint = document.createElement('div');
+    hint.className = 'preset-stack-hint';
+    hint.textContent = navigator.platform.includes('Mac') ? '⌘+click to stack effects' : 'Ctrl+click to stack effects';
+    presetList.appendChild(hint);
   }
 
   function createPresetItem(preset, isCustom) {
@@ -161,7 +167,7 @@
     `;
     el.addEventListener('click', (e) => {
       if (e.target.closest('.btn-delete-preset')) return;
-      selectPreset(preset);
+      selectPreset(preset, e);
     });
     if (isCustom) {
       el.querySelector('.btn-delete-preset').addEventListener('click', (e) => {
@@ -174,29 +180,83 @@
     return el;
   }
 
-  function selectPreset(preset) {
-    currentPresetId = preset.id;
-    currentEffect = {
-      name: preset.name,
-      icon: preset.icon,
-      description: preset.description,
-      layers: JSON.parse(JSON.stringify(preset.layers))
-    };
+  function selectPreset(preset, e) {
+    const stacking = e && (e.metaKey || e.ctrlKey);
 
-    document.querySelectorAll('.preset-item').forEach(el => {
-      el.classList.toggle('active', el.dataset.id === preset.id);
-    });
+    if (stacking && currentEffect && currentEffect.layers.length) {
+      // Toggle: if already stacked, remove it
+      if (activePresetIds.has(preset.id)) {
+        activePresetIds.delete(preset.id);
+        // Rebuild from remaining active presets
+        rebuildStackedEffect();
+      } else {
+        activePresetIds.add(preset.id);
+        const newLayers = JSON.parse(JSON.stringify(preset.layers));
+        currentEffect.layers = currentEffect.layers.concat(newLayers);
+        // Update name to show combination
+        const names = [];
+        activePresetIds.forEach(id => {
+          const p = findPresetById(id);
+          if (p) names.push(p.name);
+        });
+        currentEffect.name = names.join(' + ');
+        currentEffect.icon = autoPickEmoji(currentEffect);
+        currentEffect.description = 'Stacked: ' + names.join(', ');
+      }
+    } else {
+      // Normal click: replace entirely
+      activePresetIds.clear();
+      activePresetIds.add(preset.id);
+      currentEffect = {
+        name: preset.name,
+        icon: preset.icon,
+        description: preset.description,
+        layers: JSON.parse(JSON.stringify(preset.layers))
+      };
 
-    if (preset.defaultEasing) {
-      easingSelect.value = preset.defaultEasing;
-      engine.easing = preset.defaultEasing;
+      if (preset.defaultEasing) {
+        easingSelect.value = preset.defaultEasing;
+        engine.easing = preset.defaultEasing;
+      }
     }
+
+    // Highlight all active presets
+    document.querySelectorAll('.preset-item').forEach(el => {
+      el.classList.toggle('active', activePresetIds.has(el.dataset.id));
+    });
 
     applyEffect();
     if (imageLoaded && !engine.playing) {
       engine.play();
       setPlayingUI(true);
     }
+  }
+
+  function findPresetById(id) {
+    return PRESETS.find(p => p.id === id) || customPresets.find(p => p.id === id);
+  }
+
+  function rebuildStackedEffect() {
+    const layers = [];
+    const names = [];
+    activePresetIds.forEach(id => {
+      const p = findPresetById(id);
+      if (p) {
+        layers.push(...JSON.parse(JSON.stringify(p.layers)));
+        names.push(p.name);
+      }
+    });
+    if (layers.length === 0) {
+      currentEffect = null;
+      activePresetIds.clear();
+      return;
+    }
+    currentEffect = {
+      name: names.length > 1 ? names.join(' + ') : names[0],
+      icon: autoPickEmoji({ layers }),
+      description: names.length > 1 ? 'Stacked: ' + names.join(', ') : (findPresetById([...activePresetIds][0])?.description || ''),
+      layers
+    };
   }
 
   function applyEffect() {
@@ -511,7 +571,7 @@
     const text = promptInput.value.trim();
     if (!text) return;
     const effect = PromptParser.parse(text);
-    currentPresetId = null;
+    activePresetIds.clear();
     currentEffect = effect;
     document.querySelectorAll('.preset-item').forEach(el => el.classList.remove('active'));
     if (effect.defaultEasing) { easingSelect.value = effect.defaultEasing; engine.easing = effect.defaultEasing; }
@@ -1417,10 +1477,11 @@
     savePresetModal.style.display = 'none';
 
     // Highlight the newly saved preset
+    activePresetIds.clear();
+    activePresetIds.add(id);
     document.querySelectorAll('.preset-item').forEach(el => {
       el.classList.toggle('active', el.dataset.id === id);
     });
-    currentPresetId = id;
   });
 
   // ===== Init =====

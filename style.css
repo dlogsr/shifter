@@ -818,6 +818,15 @@ canvas {
 .preset-item:hover .btn-delete-preset { opacity: 1; }
 .btn-delete-preset:hover { color: var(--danger); }
 
+/* ===== Preset Stack Hint ===== */
+.preset-stack-hint {
+  font-size: 10px;
+  color: var(--text-dim);
+  text-align: center;
+  padding: 8px 4px 4px;
+  opacity: 0.6;
+}
+
 /* ===== Responsive ===== */
 
 /* Tablet */
