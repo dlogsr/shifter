@@ -1322,7 +1322,7 @@
   }
 
   // ===== Export =====
-  let exportFormat = 'webm';
+  let exportFormat = 'mp4';
 
   btnExport.addEventListener('click', () => { exportModal.style.display = ''; exportProgress.style.display = 'none'; });
   btnCancelExport.addEventListener('click', () => { exportModal.style.display = 'none'; });
@@ -1348,6 +1348,7 @@
     overlayCanvas.style.display = 'none';
 
     if (exportFormat === 'frames') await exportFrames(fps);
+    else if (exportFormat === 'mp4') await exportMP4(fps);
     else await exportVideo(fps);
 
     overlayCanvas.style.display = overlayVis;
@@ -1355,6 +1356,62 @@
     exportModal.style.display = 'none';
     if (wasPlaying) { engine.play(); setPlayingUI(true); }
   });
+
+  async function exportMP4(fps) {
+    if (typeof VideoEncoder === 'undefined') {
+      alert('MP4 export requires a modern browser (Chrome 94+, Edge 94+, Safari 16.4+). Falling back to WebM.');
+      return exportVideo(fps);
+    }
+
+    const { Muxer, ArrayBufferTarget } = await import('https://cdn.jsdelivr.net/npm/mp4-muxer@5/build/mp4-muxer.mjs');
+
+    const totalFrames = Math.ceil(engine.duration * fps);
+    // H.264 requires even dimensions
+    const width = canvas.width % 2 === 0 ? canvas.width : canvas.width + 1;
+    const height = canvas.height % 2 === 0 ? canvas.height : canvas.height + 1;
+
+    const target = new ArrayBufferTarget();
+    const muxer = new Muxer({
+      target,
+      video: { codec: 'avc', width, height },
+      fastStart: 'in-memory',
+    });
+
+    const encoder = new VideoEncoder({
+      output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+      error: e => console.error('VideoEncoder error:', e),
+    });
+
+    encoder.configure({
+      codec: 'avc1.42001f',
+      width,
+      height,
+      bitrate: 8_000_000,
+      framerate: fps,
+    });
+
+    for (let i = 0; i <= totalFrames; i++) {
+      engine.drawFrame(i / totalFrames);
+      progressFill.style.width = (i / totalFrames * 100) + '%';
+      progressText.textContent = `Rendering ${i}/${totalFrames}...`;
+
+      const frame = new VideoFrame(canvas, {
+        timestamp: i * (1_000_000 / fps),
+      });
+      encoder.encode(frame, { keyFrame: i % (fps * 2) === 0 });
+      frame.close();
+
+      // Yield to UI for progress updates
+      if (i % 5 === 0) await new Promise(r => setTimeout(r, 0));
+    }
+
+    await encoder.flush();
+    encoder.close();
+    muxer.finalize();
+
+    const blob = new Blob([target.buffer], { type: 'video/mp4' });
+    downloadBlob(blob, 'shifter-animation.mp4');
+  }
 
   async function exportVideo(fps) {
     const stream = canvas.captureStream(0);
