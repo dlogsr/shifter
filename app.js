@@ -1372,14 +1372,35 @@
     }
 
     const totalFrames = Math.ceil(engine.duration * fps);
-    // H.264 requires even dimensions
-    const width = canvas.width + (canvas.width % 2);
-    const height = canvas.height + (canvas.height % 2);
+    const w = canvas.width;
+    const h = canvas.height;
+    // H.264 requires even dimensions — use an OffscreenCanvas to pad if needed
+    const needsPad = (w % 2 !== 0) || (h % 2 !== 0);
+    const encW = w + (w % 2);
+    const encH = h + (h % 2);
+    let padCanvas = null;
+    if (needsPad) {
+      padCanvas = new OffscreenCanvas(encW, encH);
+    }
+
+    // Find a supported codec
+    const codecs = ['avc1.42001f', 'avc1.640028', 'avc1.4d0028', 'avc1.420034'];
+    let chosenCodec = null;
+    for (const c of codecs) {
+      const support = await VideoEncoder.isConfigSupported({
+        codec: c, width: encW, height: encH, bitrate: 8_000_000, framerate: fps,
+      });
+      if (support.supported) { chosenCodec = c; break; }
+    }
+    if (!chosenCodec) {
+      alert('No supported H.264 codec found. Falling back to WebM.');
+      return exportVideo(fps);
+    }
 
     const target = new ArrayBufferTarget();
     const muxer = new Muxer({
       target,
-      video: { codec: 'avc', width, height },
+      video: { codec: 'avc', width: encW, height: encH },
       fastStart: 'in-memory',
     });
 
@@ -1390,40 +1411,56 @@
     });
 
     encoder.configure({
-      codec: 'avc1.42001f',
-      width,
-      height,
+      codec: chosenCodec,
+      width: encW,
+      height: encH,
       bitrate: 8_000_000,
       framerate: fps,
     });
 
-    for (let i = 0; i <= totalFrames; i++) {
-      if (encodeError) throw encodeError;
+    try {
+      for (let i = 0; i <= totalFrames; i++) {
+        if (encodeError) throw encodeError;
 
-      engine.drawFrame(i / totalFrames);
-      progressFill.style.width = (i / totalFrames * 100) + '%';
-      progressText.textContent = `Rendering ${i}/${totalFrames}...`;
+        engine.drawFrame(i / totalFrames);
+        progressFill.style.width = (i / totalFrames * 100) + '%';
+        progressText.textContent = `Rendering ${i}/${totalFrames}...`;
 
-      const frame = new VideoFrame(canvas, {
-        timestamp: i * (1_000_000 / fps),
-      });
-      encoder.encode(frame, { keyFrame: i % (fps * 2) === 0 });
-      frame.close();
+        // Get a frame source with even dimensions
+        let frameSrc = canvas;
+        if (padCanvas) {
+          const ctx = padCanvas.getContext('2d');
+          ctx.clearRect(0, 0, encW, encH);
+          ctx.drawImage(canvas, 0, 0);
+          frameSrc = padCanvas;
+        }
 
-      // Backpressure: wait if encoder queue backs up
-      while (encoder.encodeQueueSize > 10) {
-        await new Promise(r => setTimeout(r, 10));
+        const frame = new VideoFrame(frameSrc, {
+          timestamp: i * (1_000_000 / fps),
+        });
+        encoder.encode(frame, { keyFrame: i % (fps * 2) === 0 });
+        frame.close();
+
+        // Backpressure: wait if encoder queue backs up, but bail on error
+        while (encoder.encodeQueueSize > 10) {
+          if (encodeError) throw encodeError;
+          await new Promise(r => setTimeout(r, 10));
+        }
+        await new Promise(r => setTimeout(r, 0));
       }
-      // Yield to UI every frame for smooth progress
-      await new Promise(r => setTimeout(r, 0));
+
+      await encoder.flush();
+      encoder.close();
+      muxer.finalize();
+
+      const blob = new Blob([target.buffer], { type: 'video/mp4' });
+      downloadBlob(blob, 'shifter-animation.mp4');
+    } catch (e) {
+      console.error('MP4 export failed:', e);
+      try { encoder.close(); } catch (_) {}
+      alert('MP4 export failed: ' + e.message + '. Falling back to WebM.');
+      return exportVideo(fps);
     }
-
-    await encoder.flush();
-    encoder.close();
-    muxer.finalize();
-
-    const blob = new Blob([target.buffer], { type: 'video/mp4' });
-    downloadBlob(blob, 'shifter-animation.mp4');
   }
 
   async function exportVideo(fps) {
