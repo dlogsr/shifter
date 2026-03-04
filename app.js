@@ -149,7 +149,8 @@
     // Stacking hint
     const hint = document.createElement('div');
     hint.className = 'preset-stack-hint';
-    hint.textContent = navigator.platform.includes('Mac') ? '⌘+click to stack effects' : 'Ctrl+click to stack effects';
+    const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+    hint.textContent = isTouchDevice ? 'Long-press to stack effects' : (navigator.platform.includes('Mac') ? '⌘+click to stack effects' : 'Ctrl+click to stack effects');
     presetList.appendChild(hint);
   }
 
@@ -169,6 +170,19 @@
       if (e.target.closest('.btn-delete-preset')) return;
       selectPreset(preset, e);
     });
+    // Long-press on touch devices enables stacking mode
+    let longPressTimer = null;
+    el.addEventListener('touchstart', (e) => {
+      if (e.target.closest('.btn-delete-preset')) return;
+      longPressTimer = setTimeout(() => {
+        longPressTimer = null;
+        el.classList.add('long-press-feedback');
+        setTimeout(() => el.classList.remove('long-press-feedback'), 300);
+        selectPreset(preset, { metaKey: true });
+      }, 500);
+    }, { passive: true });
+    el.addEventListener('touchend', () => { if (longPressTimer) clearTimeout(longPressTimer); });
+    el.addEventListener('touchmove', () => { if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; } });
     if (isCustom) {
       el.querySelector('.btn-delete-preset').addEventListener('click', (e) => {
         e.stopPropagation();
@@ -359,12 +373,54 @@
     });
   }
 
+  // Friendly labels for shader parameters
+  const PARAM_LABELS = {
+    // Effect type names
+    _types: {
+      noiseWarp: 'Noise Warp', chromatic: 'Chromatic Aberration', zoom: 'Zoom',
+      wave: 'Wave', blur: 'Blur', rgbSplit: 'RGB Split', glitch: 'Glitch',
+      ripple: 'Ripple', pixelate: 'Pixelate', displace: 'Displacement',
+      liquify: 'Liquify', rotate: 'Rotation', pixelStretch: 'Pixel Stretch',
+      smear: 'Smear', fracture: 'Fracture', brightness: 'Brightness',
+      saturation: 'Saturation', contrast: 'Contrast', vignette: 'Vignette',
+      glow: 'Glow', hueShift: 'Hue Shift',
+    },
+    // Parameter names
+    amount: 'Intensity', x: 'Horizontal', y: 'Vertical',
+    freq: 'Frequency', speed: 'Speed', r: 'Red Offset', b: 'Blue Offset',
+    centerX: 'Center X', centerY: 'Center Y', ampX: 'Amplitude X',
+    ampY: 'Amplitude Y', freqX: 'Frequency X', freqY: 'Frequency Y',
+    angle: 'Angle', intensity: 'Intensity', seed: 'Randomness',
+    amp: 'Amplitude', center: 'Center', radius: 'Radius', pos: 'Position',
+    // Suffixed sub-params
+    'amount amp': 'Intensity Strength', 'amount freq': 'Intensity Speed',
+    'amount range': 'Intensity Range', 'x amp': 'Horizontal Strength',
+    'x freq': 'Horizontal Speed', 'y amp': 'Vertical Strength',
+    'y freq': 'Vertical Speed', 'amp amp': 'Wave Strength',
+    'amp freq': 'Wave Speed', 'freq amp': 'Frequency Strength',
+    'freq freq': 'Frequency Speed', 'ampX amp': 'Amplitude X Strength',
+    'ampX freq': 'Amplitude X Speed', 'ampY amp': 'Amplitude Y Strength',
+    'ampY freq': 'Amplitude Y Speed', 'angle amp': 'Angle Strength',
+    'angle freq': 'Angle Speed', 'intensity range': 'Intensity Range',
+    'r range': 'Red Range', 'b range': 'Blue Range',
+    'x range': 'Horizontal Range', 'y range': 'Vertical Range',
+    'amount range': 'Intensity Range', 'angle range': 'Angle Range',
+    'amp range': 'Amplitude Range', 'freq range': 'Frequency Range',
+  };
+
+  function friendlyLabel(type, param) {
+    const typeName = PARAM_LABELS._types[type] || type;
+    const paramName = PARAM_LABELS[param] || param.replace(/([A-Z])/g, ' $1').replace(/^\w/, c => c.toUpperCase());
+    return `${typeName} · ${paramName}`;
+  }
+
   function addSlider(layer, label, value, min, max, onChange) {
     const row = document.createElement('div');
     row.className = 'param-row';
     const step = (max - min) > 10 ? 0.5 : 0.001;
+    const displayLabel = friendlyLabel(layer.type, label);
     row.innerHTML = `
-      <div class="param-label"><span>${layer.type} · ${label}</span><span class="param-value">${fmtNum(value)}</span></div>
+      <div class="param-label"><span>${displayLabel}</span><span class="param-value">${fmtNum(value)}</span></div>
       <input type="range" min="${min}" max="${max}" step="${step}" value="${value}">
     `;
     const input = row.querySelector('input');

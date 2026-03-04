@@ -208,6 +208,14 @@ body {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent-glow);
 }
+.preset-item.long-press-feedback {
+  animation: longPressPulse 0.3s ease;
+}
+@keyframes longPressPulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(0.96); background: var(--accent-glow); }
+  100% { transform: scale(1); }
+}
 
 .preset-icon {
   width: 32px;
@@ -857,13 +865,17 @@ canvas {
   body { overflow-y: auto; overflow-x: hidden; }
   #app { height: auto; min-height: 100vh; min-height: 100dvh; }
 
-  /* Compact header — wrap controls */
+  /* Compact header — sticky at top on mobile */
   .header {
     height: auto;
     min-height: 48px;
     padding: 8px 12px;
     flex-wrap: wrap;
     gap: 6px;
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: var(--bg-panel);
   }
   .header-actions { gap: 8px; flex-wrap: wrap; }
   .duration-control input[type="range"] { width: 60px; }
