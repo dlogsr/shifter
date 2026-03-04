@@ -876,14 +876,18 @@ canvas {
     overflow: visible;
   }
 
-  /* Preview area takes at least half the screen */
+  /* Preview area stays fixed at top while panels scroll beneath */
   .preview-area {
     order: -1;
+    position: sticky;
+    top: 0;
+    z-index: 10;
     min-height: 50vh;
     min-height: 50dvh;
     flex: none;
     padding: 10px;
     gap: 10px;
+    background: var(--bg-main);
   }
 
   /* Canvas scales to fit within the preview area */
