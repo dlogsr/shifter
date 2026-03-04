@@ -1,0 +1,40 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.shifter.app'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.shifter.app"
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+
+    buildTypes {
+        debug {}
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'androidx.webkit:webkit:1.12.1'
+
+    // Resolve Kotlin stdlib version conflicts from transitive deps
+    constraints {
+        implementation('org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22') {
+            because 'kotlin-stdlib now includes jdk7/jdk8 classes'
+        }
+        implementation('org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22') {
+            because 'kotlin-stdlib now includes jdk7/jdk8 classes'
+        }
+    }
+}
