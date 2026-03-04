@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Shifter — Image Motion Effects</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Header -->
+    <header class="header">
+      <div class="logo">
+        <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+          <rect x="2" y="2" width="24" height="24" rx="6" stroke="url(#g1)" stroke-width="2.5"/>
+          <path d="M9 14h10M14 9l5 5-5 5" stroke="url(#g1)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          <defs><linearGradient id="g1" x1="0" y1="0" x2="28" y2="28"><stop stop-color="#a78bfa"/><stop offset="1" stop-color="#6366f1"/></linearGradient></defs>
+        </svg>
+        <span>Shifter</span>
+      </div>
+      <div class="header-actions">
+        <div class="duration-control">
+          <label for="speed">Speed</label>
+          <input type="range" id="speed" min="0.1" max="2" step="0.1" value="0.5">
+          <span id="speed-label">0.5x</span>
+        </div>
+        <div class="duration-control">
+          <label for="duration">Duration</label>
+          <input type="range" id="duration" min="1" max="5" step="0.5" value="3">
+          <span id="duration-label">3.0s</span>
+        </div>
+        <button id="btn-export" class="btn btn-primary" disabled>
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2v8m0 0L5 7m3 3l3-3M3 12h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Export
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Layout -->
+    <main class="main">
+      <!-- Left Panel -->
+      <aside class="panel panel-left">
+        <!-- Tabs: Presets / Segment -->
+        <div class="panel-tabs">
+          <button class="panel-tab active" data-tab="presets">Presets</button>
+          <button class="panel-tab" data-tab="segment">Segment</button>
+        </div>
+
+        <!-- Presets Tab -->
+        <div id="tab-presets" class="tab-content active">
+          <div id="preset-list" class="preset-list"></div>
+
+          <div class="save-preset-section" style="display:none;" id="save-preset-section">
+            <button id="btn-save-preset" class="btn btn-sm btn-save-preset">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+              Save Current Effect
+            </button>
+          </div>
+
+          <div class="prompt-section">
+            <h2 class="panel-title">Describe Motion</h2>
+            <textarea id="prompt-input" placeholder="e.g. slow liquid warp with chromatic aberration and glow..." rows="3"></textarea>
+            <button id="btn-generate" class="btn btn-accent">Generate Effect</button>
+          </div>
+
+          <div id="params-section" class="params-section" style="display:none;">
+            <h2 class="panel-title">Parameters</h2>
+            <div id="params-controls"></div>
+          </div>
+        </div>
+
+        <!-- Segment Tab -->
+        <div id="tab-segment" class="tab-content">
+          <!-- API Key -->
+          <div class="segment-section">
+            <h2 class="panel-title">Roboflow API Key</h2>
+            <div class="api-key-row">
+              <input type="password" id="api-key-input" placeholder="Enter Roboflow API key" class="text-input">
+              <button id="btn-save-key" class="btn btn-sm">Save</button>
+            </div>
+            <span class="hint" id="api-key-status"></span>
+          </div>
+
+          <!-- Selection Mode -->
+          <div class="segment-section">
+            <h2 class="panel-title">Select Region</h2>
+            <div class="segment-modes">
+              <button id="btn-quick-mode" class="btn btn-sm seg-mode-btn" disabled>
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v2M7 11v2M1 7h2M11 7h2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="7" cy="7" r="2.5" fill="currentColor" opacity="0.4"/><path d="M4.5 4.5L9.5 9.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                Quick Select
+              </button>
+              <button id="btn-brush-mode" class="btn btn-sm seg-mode-btn" disabled>
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 12s1-4 4-6c2-1.5 4-1 5-3s-1-2-2-1-2 3-4 5-3 5-3 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                Brush Select
+              </button>
+              <button id="btn-click-mode" class="btn btn-sm seg-mode-btn" disabled>
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="3" stroke="currentColor" stroke-width="1.5"/><path d="M7 1v2M7 11v2M1 7h2M11 7h2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                Click to Select
+              </button>
+              <button id="btn-text-mode" class="btn btn-sm seg-mode-btn" disabled>
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 4h10M2 7h7M2 10h5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                Describe Object
+              </button>
+            </div>
+          </div>
+
+          <!-- Text Describe Input -->
+          <div id="text-segment-section" class="segment-section" style="display:none;">
+            <h2 class="panel-title">Describe what to select</h2>
+            <div class="api-key-row">
+              <input type="text" id="text-segment-input" placeholder="e.g. the car, person, sky..." class="text-input">
+              <button id="btn-text-segment" class="btn btn-sm btn-primary">Find</button>
+            </div>
+          </div>
+
+          <!-- Quick Select Options -->
+          <div id="quick-select-section" class="segment-section" style="display:none;">
+            <h2 class="panel-title">Quick Select</h2>
+            <p class="hint">Click on an object to select it. Click more areas to add. Right-click to subtract.</p>
+            <div id="quick-select-info" class="mask-info" style="display:none;"></div>
+            <div class="btn-group" id="quick-select-actions" style="margin-top:8px; display:none;">
+              <button id="btn-quick-apply" class="btn btn-sm btn-primary">Apply Mask</button>
+              <button id="btn-quick-reset" class="btn btn-sm">Reset</button>
+            </div>
+          </div>
+
+          <!-- Brush Select Options -->
+          <div id="brush-select-section" class="segment-section" style="display:none;">
+            <h2 class="panel-title">Brush Select</h2>
+            <p class="hint">Paint over the object you want to select. Release to segment.</p>
+            <div class="param-row">
+              <div class="param-label"><span>Brush Size</span><span class="param-value" id="brush-size-label">20</span></div>
+              <input type="range" id="brush-size" min="5" max="80" step="1" value="20">
+            </div>
+          </div>
+
+          <!-- Click Points List -->
+          <div id="click-points-section" class="segment-section" style="display:none;">
+            <h2 class="panel-title">Click Points</h2>
+            <p class="hint">Click on the image to add positive points. Right-click to add negative points (exclude).</p>
+            <div id="click-points-list" class="click-points-list"></div>
+            <div class="btn-group" style="margin-top:8px;">
+              <button id="btn-segment-run" class="btn btn-sm btn-primary" disabled>Segment</button>
+              <button id="btn-clear-points" class="btn btn-sm">Clear Points</button>
+            </div>
+          </div>
+
+          <!-- Mask Controls -->
+          <div id="mask-controls" class="segment-section" style="display:none;">
+            <h2 class="panel-title">Mask</h2>
+            <div class="mask-info" id="mask-info"></div>
+            <div class="mask-options">
+              <label class="checkbox-label">
+                <input type="checkbox" id="mask-invert"> Invert (apply to background)
+              </label>
+              <label class="checkbox-label">
+                <input type="checkbox" id="mask-feather" checked> Feather edges
+              </label>
+            </div>
+            <div class="btn-group" style="margin-top:8px;">
+              <button id="btn-clear-mask" class="btn btn-sm">Clear Mask</button>
+              <button id="btn-add-mask" class="btn btn-sm">Add Region</button>
+            </div>
+          </div>
+
+          <!-- Status -->
+          <div id="segment-status" class="segment-status"></div>
+        </div>
+      </aside>
+
+      <!-- Center: Canvas Preview -->
+      <section class="preview-area">
+        <div class="canvas-wrapper" id="canvas-wrapper">
+          <canvas id="canvas"></canvas>
+          <!-- Overlay canvas for mask visualization & click points -->
+          <canvas id="overlay-canvas" class="overlay-canvas"></canvas>
+          <div id="upload-overlay" class="upload-overlay">
+            <div class="upload-content">
+              <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+                <rect x="4" y="4" width="40" height="40" rx="8" stroke="#6366f1" stroke-width="2" stroke-dasharray="4 4"/>
+                <path d="M24 16v16m-8-8h16" stroke="#6366f1" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+              <p>Drop an image here or click to upload</p>
+              <span class="upload-hint">PNG, JPG, WebP — any size</span>
+              <button id="btn-try-demo" class="btn btn-sm btn-demo">Try Demo Image</button>
+            </div>
+            <input type="file" id="file-input" accept="image/*" hidden>
+          </div>
+          <!-- Replace / Remove image button (shown when image is loaded) -->
+          <button id="btn-replace-image" class="btn-replace-image" style="display:none;">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 7h10M7 2l5 5-5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span class="replace-label">Replace</span>
+          </button>
+        </div>
+
+        <!-- Playback Controls -->
+        <div class="playback-controls">
+          <button id="btn-play" class="btn-icon" disabled>
+            <svg id="icon-play" width="20" height="20" viewBox="0 0 20 20" fill="none"><polygon points="5,3 17,10 5,17" fill="currentColor"/></svg>
+            <svg id="icon-pause" width="20" height="20" viewBox="0 0 20 20" fill="none" style="display:none"><rect x="4" y="3" width="4" height="14" rx="1" fill="currentColor"/><rect x="12" y="3" width="4" height="14" rx="1" fill="currentColor"/></svg>
+          </button>
+          <button id="btn-stop" class="btn-icon" disabled>
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="4" y="4" width="12" height="12" rx="2" fill="currentColor"/></svg>
+          </button>
+          <div class="timeline-bar">
+            <div class="timeline-track" id="timeline-track">
+              <div class="timeline-progress" id="timeline-progress"></div>
+              <div class="timeline-handle" id="timeline-handle"></div>
+            </div>
+          </div>
+          <span id="time-display" class="time-display">0:00 / 0:00</span>
+          <button id="btn-loop" class="btn-icon active">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M4 10a6 6 0 0112 0M16 10a6 6 0 01-12 0" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M14 7l2 3 2-3M6 13l-2-3-2 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+      </section>
+
+      <!-- Right Panel -->
+      <aside class="panel panel-right">
+        <h2 class="panel-title">Effect Stack</h2>
+        <div id="effect-stack" class="effect-stack">
+          <p class="empty-state">Select a preset or describe a motion effect.</p>
+        </div>
+        <div id="easing-section" style="display:none;">
+          <h2 class="panel-title">Easing</h2>
+          <select id="easing-select" class="select-input">
+            <option value="linear">Linear</option>
+            <option value="easeInOut" selected>Ease In Out</option>
+            <option value="easeIn">Ease In</option>
+            <option value="easeOut">Ease Out</option>
+            <option value="easeInOutBack">Ease In Out Back</option>
+            <option value="easeInOutElastic">Elastic</option>
+            <option value="bounce">Bounce</option>
+          </select>
+        </div>
+
+        <!-- Mask Target Indicator -->
+        <div id="mask-target-info" class="mask-target-info" style="display:none;">
+          <h2 class="panel-title">Target Region</h2>
+          <div class="mask-badge" id="mask-badge">
+            <span class="mask-badge-dot"></span>
+            <span id="mask-badge-text">Full Image</span>
+          </div>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <!-- Export Modal -->
+  <div id="export-modal" class="modal" style="display:none;">
+    <div class="modal-content">
+      <h2>Export Animation</h2>
+      <div class="export-options">
+        <label>Format</label>
+        <div class="btn-group">
+          <button class="btn btn-sm active" data-format="mp4">MP4</button>
+          <button class="btn btn-sm" data-format="webm">WebM</button>
+          <button class="btn btn-sm" data-format="frames">Frames</button>
+        </div>
+        <label>FPS</label>
+        <select id="export-fps" class="select-input">
+          <option value="24">24</option>
+          <option value="30" selected>30</option>
+          <option value="60">60</option>
+        </select>
+      </div>
+      <div class="export-progress" id="export-progress" style="display:none;">
+        <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+        <span id="progress-text">Rendering...</span>
+      </div>
+      <div class="modal-actions">
+        <button id="btn-cancel-export" class="btn">Cancel</button>
+        <button id="btn-start-export" class="btn btn-primary">Render</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Save Preset Modal -->
+  <div id="save-preset-modal" class="modal" style="display:none;">
+    <div class="modal-content">
+      <h2>Save Preset</h2>
+      <div class="save-preset-form">
+        <div class="form-row">
+          <label>Icon</label>
+          <div class="emoji-picker-row">
+            <span id="save-preset-emoji" class="emoji-preview">🎭</span>
+            <span class="hint">Auto-selected from effect type</span>
+          </div>
+        </div>
+        <div class="form-row">
+          <label>Name</label>
+          <input type="text" id="save-preset-name" class="text-input" placeholder="My Custom Effect">
+        </div>
+        <div class="form-row">
+          <label>Description</label>
+          <input type="text" id="save-preset-desc" class="text-input" placeholder="Describe your effect...">
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button id="btn-cancel-save" class="btn">Cancel</button>
+        <button id="btn-confirm-save" class="btn btn-primary">Save Preset</button>
+      </div>
+    </div>
+  </div>
+
+  <footer class="site-footer">vibe coded by <a href="https://ryandumlao.com" target="_blank" rel="noopener">ryan dumlao</a> &copy; 2026</footer>
+
+  <script src="engine.js"></script>
+  <script src="presets.js"></script>
+  <script src="prompt-parser.js"></script>
+  <script src="sam.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
