@@ -827,6 +827,23 @@ canvas {
   opacity: 0.6;
 }
 
+/* ===== Footer ===== */
+.site-footer {
+  text-align: center;
+  padding: 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+  opacity: 0.6;
+}
+.site-footer a {
+  color: var(--text-dim);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.site-footer a:hover {
+  color: var(--text-secondary);
+}
+
 /* ===== Responsive ===== */
 
 /* Tablet */
@@ -859,14 +876,18 @@ canvas {
     overflow: visible;
   }
 
-  /* Preview area takes at least half the screen */
+  /* Preview area stays fixed at top while panels scroll beneath */
   .preview-area {
     order: -1;
+    position: sticky;
+    top: 0;
+    z-index: 10;
     min-height: 50vh;
     min-height: 50dvh;
     flex: none;
     padding: 10px;
     gap: 10px;
+    background: var(--bg-main);
   }
 
   /* Canvas scales to fit within the preview area */
