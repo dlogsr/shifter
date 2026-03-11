@@ -387,6 +387,7 @@ class ShaderEngine {
     this.easing = 'easeInOut';
     this.duration = 3;
     this.speed = 0.5;
+    this.effectDuration = 3; // fixed time window for shader effects; playback duration is independent
     this.playing = false;
     this.looping = true;
     this.currentTime = 0;
@@ -558,7 +559,7 @@ class ShaderEngine {
       const phase = paramDef.phase || 0;
       const amp = paramDef.amp ?? 1;
       const offset = paramDef.offset || 0;
-      const tSec = progress * this.duration;
+      const tSec = progress * this.effectDuration;
 
       switch (paramDef.wave) {
         case 'sine':     return offset + amp * Math.sin(2 * Math.PI * freq * tSec + phase);
@@ -605,7 +606,7 @@ class ShaderEngine {
 
     // Time / resolution
     this._setFloat('u_time', progress);
-    this._setFloat('u_timeSeconds', progress * this.duration);
+    this._setFloat('u_timeSeconds', progress * this.effectDuration);
     this._setVec2('u_resolution', this.canvas.width, this.canvas.height);
 
     // Mask uniforms
